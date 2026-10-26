@@ -94,6 +94,47 @@ def update_source(sid):
     return list_sources()
 
 
+@bp.post("/api/sources/<int:sid>/test")
+def test_source(sid):
+    """Fetch one result page (and the first regulation's page) and report what the parser sees."""
+    import re
+
+    from .connectors.html_search import parse_results
+
+    src = get_db().execute("SELECT * FROM sources WHERE id = ?", (sid,)).fetchone()
+    if src is None:
+        abort(404, "Sumber tidak ditemukan")
+    conn = get_connector(src["kind"], src["base_url"], json.loads(src["config"] or "{}"))
+    if not hasattr(conn, "search_url"):
+        abort(400, "Tes koneksi hanya untuk sumber situs JDIH (BPK/Kemnaker)")
+    data = request.get_json(silent=True) or {}
+    keyword = (data.get("keyword") or "keselamatan kerja").strip()
+    url = conn.search_url(keyword, 1)
+    out = {"url": url, "keyword": keyword, "ok": False}
+    try:
+        resp = conn.get(url)
+    except ConnectorError as exc:
+        out["error"] = str(exc)
+        out["notes"] = conn.notes
+        return jsonify(out)
+    hrefs = re.findall(r'href=["\']([^"\']+)', resp.text)
+    records = parse_results(resp.text, url, conn.link_pattern, conn.pdf_pattern)
+    out.update(http_status=resp.status_code, bytes=len(resp.text), links=len(hrefs),
+               matching_links=sum(1 for h in hrefs if re.search(conn.link_pattern, h)),
+               found=len(records),
+               samples=[{"citation": f"{r['jenis']} No. {r['nomor']} Tahun {r['tahun']}", "judul": r["judul"],
+                         "status": r["status_berlaku"], "url": r["url"], "pdf_url": r["pdf_url"]}
+                        for r in records[:5]])
+    if records:
+        try:
+            out["detail"] = {"url": records[0]["url"], **conn.fetch_detail(records[0]["url"])}
+        except ConnectorError as exc:
+            out["detail"] = {"url": records[0]["url"], "error": str(exc)}
+    out["ok"] = bool(records)
+    out["notes"] = conn.notes
+    return jsonify(out)
+
+
 @bp.post("/api/sync")
 def sync():
     db = get_db()

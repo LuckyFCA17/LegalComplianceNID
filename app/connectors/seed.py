@@ -64,6 +64,12 @@ CATALOG = [
         ("", "Bentuk unit penanggulangan kebakaran dan petugas peran kebakaran"),
         ("", "Lakukan latihan penanggulangan kebakaran secara berkala"),
     ]),
+    ("Perpres", "7", 2019, "Penyakit Akibat Kerja", "Berlaku", [
+        ("", "Diagnosis PAK oleh dokter kompeten dan pelaporan kasus penyakit akibat kerja"),
+    ]),
+    ("Permenkes", "11", 2022, "Pelayanan Kesehatan Penyakit Akibat Kerja", "Berlaku", [
+        ("", "Pelayanan kesehatan PAK melalui fasilitas pelayanan kesehatan / dokter perusahaan"),
+    ]),
     ("Permenaker", "2", 1980, "Pemeriksaan Kesehatan Tenaga Kerja dalam Penyelenggaraan Keselamatan Kerja", "Berlaku", [
         ("", "Pemeriksaan kesehatan sebelum bekerja, berkala (min. 1x/tahun) dan khusus"),
     ]),
@@ -149,6 +155,8 @@ KNOWN_PAGES = {
     ("Permenaker", "5", 2018):
         "https://jdih.kemnaker.go.id/peraturan/detail/1546/peraturan-menteri-ketenagakerjaan-nomor-5-tahun-2018",
     ("Permenaker", "6", 2017): "https://peraturan.bpk.go.id/Details/145520/permenaker-no-6-tahun-2017",
+    ("Perpres", "7", 2019): "https://jdih.kemnaker.go.id/peraturan/detail/1588/peraturan-presiden-nomor-7-tahun-2019",
+    ("Permenkes", "11", 2022): "https://peraturan.bpk.go.id/Details/218299/permenkes-no-11-tahun-2022",
     ("Permenaker", "12", 2015): "https://peraturan.bpk.go.id/Details/145984/permenaker-no-12-tahun-2015",
 }
 

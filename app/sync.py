@@ -18,7 +18,7 @@ DEFAULT_SOURCES = [
     },
     {
         "code": "kemnaker", "name": "JDIH Kemnaker", "kind": "kemnaker",
-        "base_url": "https://jdih.kemnaker.go.id", "config": {"max_pages": 15},
+        "base_url": "https://jdih.kemnaker.go.id", "config": {"max_pages": 5},
     },
     {
         "code": "jdihn", "name": "Feed JDIHN (JSON)", "kind": "jdihn", "base_url": None,
@@ -100,6 +100,7 @@ def run_sync(conn, source, categories=None, connector=None):
     except Exception as exc:  # keep the app alive on unexpected markup / parsing errors
         status, message = "error", f"{type(exc).__name__}: {exc}"
     errors = conn_obj.errors if conn_obj else []
+    notes = conn_obj.notes if conn_obj else []
     if status == "ok":
         message = (f"{stats['fetched']} ditemukan, {stats['inserted']} baru, {stats['updated']} diperbarui, "
                    f"{stats['linked']} ditautkan ke halaman peraturan, {stats['details']} detail/PDF dibaca")
@@ -108,6 +109,8 @@ def run_sync(conn, source, categories=None, connector=None):
             useful = stats["fetched"] or stats["linked"] or stats["details"]
             status = "partial" if useful else "error"
             message = (message + f". {len(errors)} kendala, mis.: " if useful else "") + errors[0]
+    if notes:
+        message += " (catatan: " + "; ".join(dict.fromkeys(notes)) + ")"
     conn.execute(
         "INSERT INTO sync_log (source_id, started_at, status, fetched, inserted, updated, message) "
         "VALUES (?,?,?,?,?,?,?)",

@@ -12,12 +12,15 @@ Known URL shapes (2026):
   BPK      search  https://peraturan.bpk.go.id/Search?keywords=...&p=2
            detail  https://peraturan.bpk.go.id/Details/145520/permenaker-no-6-tahun-2017
            pdf     https://peraturan.bpk.go.id/Download/189838/Permenaker%20Nomor%2024%20Tahun%202021.pdf
-  Kemnaker list    https://jdih.kemnaker.go.id/peraturan?page=2
-           detail  https://jdih.kemnaker.go.id/peraturan/detail/1546/peraturan-menteri-...-nomor-5-tahun-2018
+           (the PDF id differs from the detail id, so the detail page must be opened)
+  Kemnaker list    https://jdih.kemnaker.go.id/peraturan?hal=2&keyword=...&nomor=&sort=terbaru&status=&tahun=
+           detail  https://jdih.kemnaker.go.id/peraturan/detail/1588/peraturan-presiden-nomor-7-tahun-2019
            pdf     https://jdih.kemnaker.go.id/asset/data_puu/2025pmnaker013.pdf
+Detail URLs end in a slug that spells the citation ("permenkes-no-11-tahun-2022"), which is used as a
+fallback when the result card's text cannot be parsed.
 """
 import re
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -70,6 +73,16 @@ def _pdf_link(node, page_url, pdf_pattern):
     return None
 
 
+def citation_from_url(url):
+    """Citation spelled by a detail URL's slug, e.g. .../permenkes-no-11-tahun-2022 -> Permenkes 11/2022."""
+    for segment in reversed(urlparse(url).path.strip("/").split("/")):
+        text = unquote(segment).replace("-", " ").replace("_", " ")
+        parsed = parse_citation(text)
+        if parsed:
+            return parsed
+    return None
+
+
 def parse_results(html, page_url, link_pattern, pdf_pattern=DEFAULT_PDF_PATTERN):
     soup = BeautifulSoup(html, "html.parser")
     link_re = re.compile(link_pattern)
@@ -94,6 +107,9 @@ def parse_results(html, page_url, link_pattern, pdf_pattern=DEFAULT_PDF_PATTERN)
                 parsed = parse_citation(line)
                 if parsed:
                     break
+        slug = citation_from_url(url)
+        if not parsed and slug:
+            parsed = slug
         if not parsed:
             m = CITATION_HEAD_RE.search(text_blob)
             parsed = parse_citation(m.group(0)) if m else None
@@ -171,12 +187,16 @@ class HtmlSearchConnector(Connector):
     def pdf_pattern(self):
         return self.config.get("pdf_pattern") or DEFAULT_PDF_PATTERN
 
+    @property
+    def link_pattern(self):
+        return self.config.get("link_pattern") or self.default_link_pattern
+
     def search_url(self, keyword, page):
         return self.search_template.format(base=self.base_url, q=quote_plus(keyword or ""), page=page)
 
     def _pages(self, keyword):
-        pattern = self.config.get("link_pattern") or self.default_link_pattern
         max_pages = int(self.config.get("max_pages", self.default_max_pages))
+        previous = None
         for page in range(1, max_pages + 1):
             url = self.search_url(keyword, page)
             try:
@@ -184,12 +204,16 @@ class HtmlSearchConnector(Connector):
             except ConnectorError as exc:
                 self.errors.append(str(exc))
                 return
-            records = parse_results(html, url, pattern, self.pdf_pattern)
+            records = parse_results(html, url, self.link_pattern, self.pdf_pattern)
             if not records:
-                if page == 1:
+                if page == 1 and keyword is None:
                     self.errors.append(f"Tidak ada peraturan yang dikenali di {url} — tampilan situs mungkin "
                                        "berubah; sesuaikan link_pattern/search_url")
                 return
+            urls = [r["url"] for r in records]
+            if urls == previous:
+                return  # the site ignored the page parameter and served the same page again
+            previous = urls
             yield from records
 
     def fetch(self, categories=None):
@@ -197,23 +221,40 @@ class HtmlSearchConnector(Connector):
             # Listing without keyword search: walk the newest pages once and classify locally.
             yield from self._pages(None)
             return
+        found = False
         for kw in self.keywords(categories):
-            yield from self._pages(kw)
+            for rec in self._pages(kw):
+                found = True
+                yield rec
+        if not found and not self.errors:
+            self.errors.append(f"Pencarian di {self.search_url('…', 1)} tidak mengembalikan peraturan yang dikenali "
+                               "— tampilan situs mungkin berubah; gunakan tombol Tes koneksi")
+
+    default_lookup_url = None
+
+    @property
+    def lookup_template(self):
+        tmpl = self.config.get("lookup_url") or self.default_lookup_url
+        if tmpl:
+            return tmpl
+        return self.search_template if "{q}" in self.search_template else None
 
     @property
     def supports_lookup(self):
-        return "{q}" in self.search_template
+        return bool(self.lookup_template)
 
     def fetch_detail(self, url):
         return parse_detail(self.get(url).text, url, self.pdf_pattern)
 
     def lookup(self, jenis, nomor, tahun):
+        """Search the site for one citation and return the matching result (with its detail URL)."""
         if not self.supports_lookup:
             return None
         key = reg_key(jenis, nomor, tahun)
-        pattern = self.config.get("link_pattern") or self.default_link_pattern
-        url = self.search_url(f"{jenis} nomor {nomor} tahun {tahun}", 1)
-        for rec in parse_results(self.get(url).text, url, pattern, self.pdf_pattern):
+        url = self.lookup_template.format(
+            base=self.base_url, page=1, q=quote_plus(f"{jenis} No. {nomor} Tahun {tahun}"),
+            jenis=quote_plus(jenis), nomor=quote_plus(str(nomor)), tahun=tahun or "")
+        for rec in parse_results(self.get(url).text, url, self.link_pattern, self.pdf_pattern):
             if reg_key(rec["jenis"], rec["nomor"], rec["tahun"]) == key:
                 return rec
         return None
@@ -223,17 +264,16 @@ class BpkConnector(HtmlSearchConnector):
     """JDIH BPK RI — https://peraturan.bpk.go.id (database peraturan nasional & daerah)."""
     kind = "bpk"
     default_search_url = "{base}/Search?keywords={q}&tentang=&nomor=&p={page}"
-    default_link_pattern = r"/Details/\d+"
+    default_link_pattern = r"(?i)Details/\d+"
 
 
 class KemnakerConnector(HtmlSearchConnector):
     """JDIH Kementerian Ketenagakerjaan — https://jdih.kemnaker.go.id.
 
-    The public catalogue is a paginated list (/peraturan?page=N, newest first). Its keyword
-    parameter is not documented, so by default the connector walks the list and classifies
-    locally; set "search_url" with a {q} placeholder in the source config to search instead.
+    The catalogue /peraturan pages with "hal" and filters with keyword / nomor / tahun.
     """
     kind = "kemnaker"
-    default_search_url = "{base}/peraturan?page={page}"
-    default_link_pattern = r"/peraturan/detail/\d+"
-    default_max_pages = 15
+    default_search_url = "{base}/peraturan?hal={page}&keyword={q}&nomor=&sort=terbaru&status=&tahun="
+    default_lookup_url = "{base}/peraturan?hal=1&keyword=&nomor={nomor}&sort=terbaru&status=&tahun={tahun}"
+    default_link_pattern = r"(?i)peraturan/detail/\d+"
+    default_max_pages = 5

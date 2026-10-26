@@ -118,8 +118,9 @@ def migrate(conn):
     # v1 stored BPK *search* URLs for catalogue entries; they are not the regulation's own page.
     conn.execute("UPDATE regulations SET url = NULL WHERE url LIKE '%/Search?keywords=%'")
     # v1 pointed the Kemnaker source at a non-existent catalogue URL with only 2 pages.
-    conn.execute("UPDATE sources SET config = '{\"max_pages\": 15}' "
-                 "WHERE code = 'kemnaker' AND config = '{\"max_pages\": 2}'")
+    # Kemnaker now searches by keyword (pages via "hal"), so fewer pages per keyword are needed.
+    conn.execute("UPDATE sources SET config = '{\"max_pages\": 5}' "
+                 "WHERE code = 'kemnaker' AND config IN ('{\"max_pages\": 2}', '{\"max_pages\": 15}')")
 
 
 def init_db(conn):

@@ -124,13 +124,56 @@ def test_kemnaker_listing_and_detail():
                  "judul": "Keselamatan dan Kesehatan Kerja Lingkungan Kerja"}
 
 
-def test_kemnaker_uses_catalogue_pages_not_keyword_search(fake_http):
-    fake_http.pages = {KEM + "/peraturan?page=1": (200, KEM_LIST), KEM + "/peraturan?page=2": (200, "<p>kosong</p>")}
-    c = KemnakerConnector(KEM, {"max_pages": 5, "delay": 0})
+def test_kemnaker_searches_catalogue_with_hal_pages(fake_http):
+    fake_http.pages = {KEM + "/peraturan?hal=1&keyword=k3&": (200, KEM_LIST),
+                       KEM + "/peraturan?hal=2&keyword=k3&": (200, "<p>kosong</p>")}
+    c = KemnakerConnector(KEM, {"keywords": ["k3"], "max_pages": 5, "delay": 0})
     recs = list(c.fetch(["K3"]))
     assert len(recs) == 2
-    assert fake_http.calls == [KEM + "/peraturan?page=1", KEM + "/peraturan?page=2"]
-    assert not c.supports_lookup
+    assert fake_http.calls == [KEM + "/",  # warm-up visit for cookies
+                               KEM + "/peraturan?hal=1&keyword=k3&nomor=&sort=terbaru&status=&tahun=",
+                               KEM + "/peraturan?hal=2&keyword=k3&nomor=&sort=terbaru&status=&tahun="]
+    assert c.errors == []
+
+
+def test_pagination_stops_when_site_repeats_page(fake_http):
+    fake_http.pages = {KEM + "/peraturan?hal=": (200, KEM_LIST)}  # every page identical
+    c = KemnakerConnector(KEM, {"keywords": ["k3"], "max_pages": 5, "delay": 0})
+    assert len(list(c.fetch())) == 2
+    assert len([u for u in fake_http.calls if "hal=" in u]) == 2
+
+
+def test_kemnaker_lookup_filters_by_nomor_and_tahun(fake_http):
+    page = """<div class="item"><a href="peraturan/detail/1588/peraturan-presiden-nomor-7-tahun-2019">Detail</a>
+              <p>Penyakit Akibat Kerja</p><span class="badge">Berlaku</span></div>"""
+    fake_http.pages = {KEM + "/peraturan?hal=1&keyword=&nomor=7&sort=terbaru&status=&tahun=2019": (200, page)}
+    rec = KemnakerConnector(KEM, {"delay": 0}).lookup("Perpres", "7", 2019)
+    assert rec["url"] == KEM + "/peraturan/detail/1588/peraturan-presiden-nomor-7-tahun-2019"
+    assert (rec["jenis"], rec["judul"], rec["status_berlaku"]) == ("Perpres", "Penyakit Akibat Kerja", "Berlaku")
+
+
+def test_citation_from_slug_when_card_text_is_unhelpful():
+    html = """<div class="card"><a href="/Details/218299/permenkes-no-11-tahun-2022">Lihat</a>
+              <p>Pelayanan Kesehatan Penyakit Akibat Kerja</p></div>"""
+    [rec] = parse_results(html, BPK + "/Search?keywords=x", BpkConnector.default_link_pattern)
+    assert (rec["jenis"], rec["nomor"], rec["tahun"]) == ("Permenkes", "11", 2022)
+    assert rec["judul"] == "Pelayanan Kesehatan Penyakit Akibat Kerja"
+
+
+def test_ssl_fallback_for_incomplete_certificate_chain(fake_http, monkeypatch):
+    def get(self, url, timeout=None, verify=True, **kw):
+        FakeSession.calls.append((url, verify))
+        if verify:
+            raise requests.exceptions.SSLError("unable to get local issuer certificate")
+        return FakeResponse(url, KEM_LIST)
+    monkeypatch.setattr(FakeSession, "get", get)
+    c = KemnakerConnector(KEM, {"keywords": ["k3"], "max_pages": 1, "delay": 0})
+    assert len(list(c.fetch())) == 2
+    assert "tanpa verifikasi SSL" in c.notes[0]
+
+    strict = KemnakerConnector(KEM, {"keywords": ["k3"], "max_pages": 1, "delay": 0, "ssl_fallback": False})
+    assert list(strict.fetch()) == []
+    assert "sertifikat SSL ditolak" in strict.errors[0]
 
 
 def test_http_errors_are_explained(fake_http):
@@ -157,8 +200,10 @@ def test_bpk_sync_links_catalogue_entries_to_pages_and_pdfs(app, fake_http):
         </div>"""
     fake_http.pages = {
         BPK + "/Search?keywords=k3": (200, BPK_SEARCH),
-        BPK + "/Search?keywords=PP+nomor+50+tahun+2012": (200, lookup_page),
+        BPK + "/Search?keywords=PP+No.+50+Tahun+2012": (200, lookup_page),
         BPK + "/Details/145520/": (200, BPK_DETAIL),
+        BPK + "/Details/218299/": (200, '<p>Status</p><p>Berlaku</p>'
+                                        '<a href="/Download/212692/Permenkes%20Nomor%2011%20Tahun%202022.pdf">Unduh</a>'),
         BPK + "/Details/5/": (200, '<a href="/Download/5/PP%2050%202012.pdf">PDF</a><p>Status</p><p>Berlaku</p>'),
         BPK + "/Search": (200, "<p>Tidak ada hasil</p>"),
     }
@@ -175,6 +220,8 @@ def test_bpk_sync_links_catalogue_entries_to_pages_and_pdfs(app, fake_http):
     listrik = _reg(conn, "Permenaker", "12", 2015)
     assert listrik["pdf_url"].endswith("Permenaker%2012%20Tahun%202015.pdf")
 
+    pak = _reg(conn, "Permenkes", "11", 2022)  # catalogue entry with a known page: PDF id differs from page id
+    assert pak["pdf_url"] == BPK + "/Download/212692/Permenkes%20Nomor%2011%20Tahun%202022.pdf"
     smk3 = _reg(conn, "PP", "50", 2012)  # catalogue entry without a page: found by citation lookup
     assert smk3["url"] == BPK + "/Details/5/pp-no-50-tahun-2012"
     assert smk3["pdf_url"] == BPK + "/Download/5/PP%2050%202012.pdf"
@@ -183,7 +230,7 @@ def test_bpk_sync_links_catalogue_entries_to_pages_and_pdfs(app, fake_http):
     # Entries looked up without success are not searched again on the next run.
     before = len(fake_http.calls)
     run_sync(conn, conn.execute("SELECT * FROM sources WHERE code = 'bpk'").fetchone(), ["K3"])
-    repeated = [u for u in fake_http.calls[before:] if "nomor+50+tahun+2012" in u]
+    repeated = [u for u in fake_http.calls[before:] if "No.+50+Tahun+2012" in u]
     assert repeated == []
     conn.close()
 
@@ -247,5 +294,24 @@ def test_migration_from_v1_database(tmp_path):
     init_db(conn)
     row = conn.execute("SELECT url, pdf_url, detail_checked_at FROM regulations").fetchone()
     assert tuple(row) == (None, None, None)
-    assert conn.execute("SELECT config FROM sources WHERE code='kemnaker'").fetchone()[0] == '{"max_pages": 15}'
+    assert conn.execute("SELECT config FROM sources WHERE code='kemnaker'").fetchone()[0] == '{"max_pages": 5}'
     conn.close()
+
+
+def test_source_connection_test_endpoint(app, fake_http):
+    from app.auth import create_user
+    from app.db import get_db
+    with app.app_context():
+        create_user(get_db(), "e@x.co", "E", "rahasia123", "editor")
+    c = app.test_client()
+    c.post("/api/auth/login", json={"email": "e@x.co", "password": "rahasia123"})
+    sid = next(s["id"] for s in c.get("/api/sources").get_json() if s["code"] == "bpk")
+    c.patch(f"/api/sources/{sid}", json={"config": {"delay": 0}})  # editor may not change config
+    fake_http.pages = {BPK + "/Search?keywords=k3": (200, BPK_SEARCH), BPK + "/Details/145520/": (200, BPK_DETAIL)}
+    t = c.post(f"/api/sources/{sid}/test", json={"keyword": "k3"}).get_json()
+    assert t["ok"] and t["found"] == 2 and t["matching_links"] == 2
+    assert t["detail"]["pdf_url"].endswith("Permenaker%20Nomor%206%20Tahun%202017.pdf")
+
+    fake_http.pages = {BPK: (403, "blocked")}
+    t = c.post(f"/api/sources/{sid}/test", json={"keyword": "k3"}).get_json()
+    assert not t["ok"] and "HTTP 403" in t["error"]

@@ -97,21 +97,28 @@ Di tab **Sumber Data**, tiap sumber memiliki URL dasar dan konfigurasi JSON.
 | Sumber | Cara kerja | Halaman peraturan | PDF |
 |---|---|---|---|
 | JDIH BPK RI | Pencarian kata kunci per kategori (`/Search?keywords=…&p=N`) | `/Details/{id}/{slug}` | `/Download/{id}/{file}.pdf` |
-| JDIH Kemnaker | Menelusuri katalog terbaru (`/peraturan?page=N`), lalu klasifikasi lokal | `/peraturan/detail/{id}/{slug}` | `/asset/data_puu/….pdf` |
+| JDIH Kemnaker | Pencarian katalog (`/peraturan?hal=N&keyword=…&sort=terbaru`) | `/peraturan/detail/{id}/{slug}` | `/asset/data_puu/….pdf` |
 
 Setiap sinkronisasi:
 1. mengambil daftar peraturan dan menyimpan **tautan ke halaman peraturan itu sendiri** (bukan halaman pencarian);
 2. membuka halaman tiap peraturan untuk mengambil **tautan PDF** dan status terkini (maks. `detail_limit` per sinkronisasi);
-3. (BPK) mencari halaman untuk peraturan yang belum tertaut, misalnya dari katalog awal, berdasarkan sitasinya (maks. `lookup_limit`).
+3. mencari halaman untuk peraturan yang belum tertaut (misalnya dari katalog awal) berdasarkan sitasinya —
+   BPK lewat kata kunci, Kemnaker lewat filter nomor & tahun (maks. `lookup_limit`).
+
+Jika teks hasil pencarian sulit dibaca, jenis/nomor/tahun diambil dari slug alamat halaman
+(mis. `.../permenkes-no-11-tahun-2022`). Sertifikat SSL situs .go.id yang tidak lengkap ditangani otomatis
+(`ssl_fallback`, dicatat di riwayat sinkronisasi).
 
 Peraturan yang sudah dicek tidak dicek ulang selama 30 hari. Dari panel detail sebuah peraturan, editor juga bisa
 menekan **Cari halaman & PDF di JDIH**, atau mengisi tautan halaman/PDF secara manual.
 
 | Kunci | Berlaku untuk | Arti |
 |---|---|---|
-| `keywords` | bpk | Daftar kata kunci pencarian (default: per kategori terpilih) |
-| `max_pages` | bpk, kemnaker | Jumlah halaman hasil per kata kunci / halaman katalog (default 2 / 15) |
+| `keywords` | bpk, kemnaker | Daftar kata kunci pencarian (default: per kategori terpilih) |
+| `max_pages` | bpk, kemnaker | Jumlah halaman hasil per kata kunci (default 2 / 5) |
 | `search_url` | bpk, kemnaker | Template URL, placeholder `{base}`, `{q}` (kata kunci), `{page}` |
+| `lookup_url` | bpk, kemnaker | Template pencarian satu peraturan, placeholder `{q}`, `{jenis}`, `{nomor}`, `{tahun}` |
+| `ssl_fallback` | semua | Coba ulang tanpa verifikasi SSL bila rantai sertifikat situs tidak lengkap (default `true`) |
 | `link_pattern` | bpk, kemnaker | Regex href tautan halaman peraturan |
 | `pdf_pattern` | bpk, kemnaker | Regex tautan PDF (default: `.pdf` atau `/download/`) |
 | `detail_limit`, `lookup_limit` | bpk, kemnaker | Batas halaman detail / pencarian sitasi per sinkronisasi (default 30 / 20) |
@@ -121,7 +128,11 @@ menekan **Cari halaman & PDF di JDIH**, atau mengisi tautan halaman/PDF secara m
 
 ### Jika sinkronisasi gagal
 Riwayat sinkronisasi menampilkan penyebabnya, misalnya `HTTP 403` (situs memblokir IP/bot), `HTTP 404`
-(alamat berubah), atau "tidak ada peraturan yang dikenali" (tampilan situs berubah). Untuk diagnosa:
+(alamat berubah), atau "tidak ada peraturan yang dikenali" (tampilan situs berubah).
+
+Tekan **Tes koneksi** pada kartu sumber (tab *Sumber Data*): aplikasi mengambil satu halaman hasil pencarian
+dan satu halaman peraturan, lalu menampilkan apakah situs merespons, berapa tautan peraturan & PDF yang dikenali,
+beserta contohnya. Dari terminal:
 ```bash
 flask --app run inspect-source bpk --keyword "keselamatan kerja"
 flask --app run inspect-source kemnaker

@@ -432,13 +432,15 @@ async function loadSources() {
       <label>Konfigurasi (JSON) <textarea name="config" rows="3">${esc(JSON.stringify(s.config, null, 1))}</textarea></label>`}
       <div class="status">${s.last_sync ? fmtDate(s.last_sync) + " — " + esc(s.last_status) : "Belum pernah disinkronkan"}</div>
       <div class="actions">${s.kind === "seed" ? "" : `<button class="secondary" data-save="${s.id}">Simpan</button>`}
+        ${s.kind === "seed" || s.kind === "jdihn" ? "" : `<button class="secondary" data-test="${s.id}">Tes koneksi</button>`}
         <button data-sync="${s.id}">Sinkronkan</button></div>
+      <div class="test-result" hidden></div>
     </div>`).join("");
   if (!isAdmin()) {
     // Only admins may change source settings; editors may still run a sync.
     $("#sources").querySelectorAll("input, textarea, [data-save]").forEach((el) => (el.disabled = true));
   }
-  if (!canEdit()) $("#sources").querySelectorAll("[data-sync]").forEach((el) => (el.disabled = true));
+  if (!canEdit()) $("#sources").querySelectorAll("[data-sync], [data-test]").forEach((el) => (el.disabled = true));
   $("#sync-log tbody").innerHTML = log.map((l) => `<tr><td>${fmtDate(l.started_at)}</td><td>${esc(l.source_name)}</td>
     <td>${l.status === "ok" ? "✓ OK" : "✕ Gagal"}</td><td>${esc(l.message)}</td></tr>`).join("") ||
     `<tr><td colspan="4" class="muted">Belum ada riwayat.</td></tr>`;
@@ -456,8 +458,46 @@ async function doSync(btn, body) {
   loadSources();
 }
 $("#btn-sync-all").addEventListener("click", (e) => doSync(e.target, {}));
+function renderTest(t) {
+  const line = (ok, text) => `<li class="${ok ? "ok" : "bad"}">${ok ? "✓" : "✕"} ${text}</li>`;
+  let html = `<p class="muted">GET <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.url)}</a></p><ul class="checks">`;
+  if (t.error) {
+    html += line(false, esc(t.error));
+  } else {
+    html += line(true, `Situs merespons (HTTP ${t.http_status}, ${Math.round(t.bytes / 1024)} KB, ${t.links} tautan)`);
+    html += line(t.matching_links > 0, `${t.matching_links} tautan ke halaman peraturan`);
+    html += line(t.found > 0, `${t.found} peraturan dikenali`);
+    if (t.detail) {
+      html += t.detail.error ? line(false, "Halaman peraturan: " + esc(t.detail.error))
+        : line(!!t.detail.pdf_url, t.detail.pdf_url ? `PDF ditemukan: <a href="${esc(t.detail.pdf_url)}" target="_blank" rel="noopener">buka</a>`
+          : "Halaman peraturan terbuka, tetapi tautan PDF tidak terdeteksi");
+    }
+  }
+  (t.notes || []).forEach((n) => { html += `<li class="note">ℹ ${esc(n)}</li>`; });
+  html += "</ul>";
+  if (t.samples && t.samples.length) {
+    html += `<ul class="plain">${t.samples.map((r) => `<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.citation)}</a>
+      ${r.pdf_url ? `<a class="pdf-chip" href="${esc(r.pdf_url)}" target="_blank" rel="noopener">PDF</a>` : ""}
+      <div class="meta">${esc(r.judul)} · ${esc(r.status)}</div></li>`).join("")}</ul>`;
+  }
+  return html;
+}
 $("#sources").addEventListener("click", async (e) => {
   if (e.target.dataset.sync) return doSync(e.target, { source_ids: [+e.target.dataset.sync] });
+  if (e.target.dataset.test) {
+    const card = e.target.closest("[data-src]");
+    const box = $(".test-result", card);
+    const keyword = prompt("Kata kunci uji:", "keselamatan kerja");
+    if (keyword === null) return;
+    e.target.disabled = true;
+    box.hidden = false;
+    box.innerHTML = `<p class="muted">Menghubungi situs…</p>`;
+    try {
+      box.innerHTML = renderTest(await api(`/api/sources/${e.target.dataset.test}/test`, { method: "POST", body: { keyword } }));
+    } catch (err) { box.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+    e.target.disabled = false;
+    return;
+  }
   if (e.target.dataset.save) {
     const card = e.target.closest("[data-src]");
     let config;

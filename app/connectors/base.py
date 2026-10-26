@@ -5,9 +5,11 @@ regulation's own detail page), pdf_url, external_id (optional) and suggested
 (optional list of obligation dicts).
 """
 import time
+import warnings
 from urllib.parse import urlparse
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from ..legal import normalize_jenis, normalize_status, parse_citation
 
@@ -45,7 +47,34 @@ class Connector:
         self.timeout = timeout
         self.delay = float(self.config.get("delay", 0.5))  # politeness pause between requests
         self.errors = []  # non-fatal request errors collected during fetch()
+        self.notes = []   # informational remarks for the sync log
         self._last = 0.0
+        self._warmed = False
+        self._insecure = False
+
+    def _warm_up(self):
+        """Visit the home page once so session cookies (anti-bot / CSRF) are set like in a browser."""
+        self._warmed = True
+        if not self.base_url:
+            return
+        try:
+            self._request(self.base_url + "/")
+        except requests.RequestException:
+            pass  # the real request will report the problem
+
+    def _request(self, url, **kw):
+        try:
+            return self.session.get(url, timeout=self.timeout, verify=not self._insecure, **kw)
+        except requests.exceptions.SSLError:
+            # Several .go.id sites serve an incomplete certificate chain: browsers repair it, Python does not.
+            # These are public, read-only pages, so by default retry without verification and say so.
+            if self._insecure or not self.config.get("ssl_fallback", True):
+                raise
+            self._insecure = True
+            self.notes.append(f"sertifikat SSL {urlparse(url).netloc} tidak lengkap; diakses tanpa verifikasi SSL")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                return self.session.get(url, timeout=self.timeout, verify=False, **kw)
 
     def keywords(self, categories=None):
         explicit = self.config.get("keywords")
@@ -61,20 +90,34 @@ class Connector:
         wait = self._last + self.delay - time.monotonic()
         if wait > 0:
             time.sleep(wait)
+        if not self._warmed:
+            self._warm_up()
         try:
-            resp = self.session.get(url, timeout=self.timeout, **kw)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                resp = self._request(url, **kw)
             self._last = time.monotonic()
             resp.raise_for_status()
         except requests.HTTPError as exc:
             code = exc.response.status_code
-            hint = {403: " (akses ditolak situs — kemungkinan proteksi bot/IP)", 404: " (alamat tidak ditemukan — "
-                    "periksa search_url di konfigurasi sumber)"}.get(code, "")
+            hint = {403: " (akses ditolak situs — kemungkinan proteksi bot/IP server)",
+                    404: " (alamat tidak ditemukan — halaman dihapus/dipindah atau search_url perlu disesuaikan)",
+                    429: " (terlalu banyak permintaan — naikkan 'delay' di konfigurasi sumber)"}.get(code, "")
+            if code >= 500:
+                hint = " (server JDIH sedang bermasalah — coba lagi nanti)"
             raise ConnectorError(f"HTTP {code} dari {url}{hint}") from exc
         except requests.RequestException as exc:
             self._last = time.monotonic()
-            reason = str(exc)
-            reason = reason if len(reason) <= 160 else reason[:160] + "…"
-            raise ConnectorError(f"Gagal mengakses {urlparse(url).netloc}: {reason}") from exc
+            host = urlparse(url).netloc
+            if isinstance(exc, requests.Timeout):
+                reason = f"tidak merespons dalam {self.timeout} detik"
+            elif isinstance(exc, requests.exceptions.SSLError):
+                reason = "sertifikat SSL ditolak (set \"ssl_fallback\": true di konfigurasi)"
+            elif isinstance(exc, requests.ConnectionError):
+                reason = "tidak dapat terhubung (periksa koneksi internet / DNS / firewall)"
+            else:
+                reason = str(exc)[:160]
+            raise ConnectorError(f"Gagal mengakses {host}: {reason}") from exc
         return resp
 
     def fetch(self, categories=None):
