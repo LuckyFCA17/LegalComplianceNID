@@ -6,8 +6,6 @@ re-verified through a live sync or the official JDIH page before relying on them
 Each entry may carry suggested obligations, which are created automatically
 when the regulation is marked relevant.
 """
-from urllib.parse import quote_plus
-
 from .base import Connector, make_record
 
 # (jenis, nomor, tahun, judul, status, [(pasal, kewajiban), ...])
@@ -145,11 +143,20 @@ CATALOG = [
 ]
 
 
+# Detail pages already known for some entries; the rest are linked by a BPK sync (lookup by citation).
+KNOWN_PAGES = {
+    ("UU", "1", 1970): "https://jdih.kemnaker.go.id/peraturan/detail/49/undang-undang-nomor-1-tahun-1970",
+    ("Permenaker", "5", 2018):
+        "https://jdih.kemnaker.go.id/peraturan/detail/1546/peraturan-menteri-ketenagakerjaan-nomor-5-tahun-2018",
+    ("Permenaker", "6", 2017): "https://peraturan.bpk.go.id/Details/145520/permenaker-no-6-tahun-2017",
+    ("Permenaker", "12", 2015): "https://peraturan.bpk.go.id/Details/145984/permenaker-no-12-tahun-2015",
+}
+
+
 def catalog_records():
     for jenis, nomor, tahun, judul, status, obligations in CATALOG:
-        url = "https://peraturan.bpk.go.id/Search?keywords=" + quote_plus(judul[:80])
         yield make_record(
-            jenis, nomor, tahun, judul, status=status, url=url,
+            jenis, nomor, tahun, judul, status=status, url=KNOWN_PAGES.get((jenis, nomor, tahun)),
             suggested=[{"pasal": p, "description": d} for p, d in obligations],
         )
 

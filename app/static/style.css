@@ -204,3 +204,16 @@ body:not([data-role="admin"]) .admin-only { display: none !important; }
 .login-card { width: min(400px, 100%); padding: 28px; margin: 0; }
 .login-card .brand { margin-bottom: 20px; }
 .error { color: var(--critical); min-height: 1em; margin: 8px 0 0; }
+
+/* regulation documents */
+.doclinks { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 20px; }
+.doclinks h3 { margin-bottom: 10px; }
+.doc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.manual-links { margin-top: 10px; }
+.manual-links summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.manual-links label { display: block; font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+.manual-links input { width: 100%; margin-top: 3px; }
+a.link { color: var(--accent); }
+.pdf-chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+  background: var(--critical); color: #fff; text-decoration: none; vertical-align: 1px; }
+.pdf-chip.ghost { background: var(--surface-2); color: var(--ink-2); }

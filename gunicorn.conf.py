@@ -5,5 +5,5 @@ bind = f"0.0.0.0:{os.environ.get('PORT', '8000')}"
 preload_app = True
 workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 threads = 4
-timeout = 120  # JDIH sync requests can be slow
+timeout = 600  # a JDIH sync opens many pages (search, detail, PDF lookup)
 accesslog = "-"

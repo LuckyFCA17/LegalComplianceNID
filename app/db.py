@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS regulations (
     tahun           INTEGER,
     judul           TEXT NOT NULL,        -- "tentang ..."
     status_berlaku  TEXT NOT NULL DEFAULT 'Berlaku', -- Berlaku | Diubah | Dicabut
-    url             TEXT,
+    url             TEXT,                 -- the regulation's own page on a JDIH site
+    pdf_url         TEXT,                 -- official PDF of the regulation
+    detail_checked_at TEXT,               -- last time the detail page was read / looked up
     category        TEXT NOT NULL DEFAULT 'Lainnya',
     category_locked INTEGER NOT NULL DEFAULT 0, -- 1 = set manually, sync won't overwrite
     relevance       TEXT NOT NULL DEFAULT 'pending', -- pending | relevan | tidak_relevan
@@ -101,7 +103,27 @@ def close_db(_exc=None):
         db.close()
 
 
+MIGRATIONS = [
+    # (table, column, DDL) — columns added after the first release
+    ("regulations", "pdf_url", "ALTER TABLE regulations ADD COLUMN pdf_url TEXT"),
+    ("regulations", "detail_checked_at", "ALTER TABLE regulations ADD COLUMN detail_checked_at TEXT"),
+]
+
+
+def migrate(conn):
+    for table, column, ddl in MIGRATIONS:
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(ddl)
+    # v1 stored BPK *search* URLs for catalogue entries; they are not the regulation's own page.
+    conn.execute("UPDATE regulations SET url = NULL WHERE url LIKE '%/Search?keywords=%'")
+    # v1 pointed the Kemnaker source at a non-existent catalogue URL with only 2 pages.
+    conn.execute("UPDATE sources SET config = '{\"max_pages\": 15}' "
+                 "WHERE code = 'kemnaker' AND config = '{\"max_pages\": 2}'")
+
+
 def init_db(conn):
     conn.execute("PRAGMA journal_mode = WAL")  # lets several web workers read while one writes
     conn.executescript(SCHEMA)
+    migrate(conn)
     conn.commit()

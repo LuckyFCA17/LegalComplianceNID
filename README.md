@@ -92,20 +92,44 @@ Pasang di belakang HTTPS (reverse proxy) dan set `LCN_SECURE_COOKIES=1` + `LCN_B
 `sqlite3 /var/data/compliance.db ".backup /var/data/backup.db"`.
 
 ## Konfigurasi sumber data
-Di tab **Sumber Data**, tiap sumber memiliki URL dasar dan konfigurasi JSON:
+Di tab **Sumber Data**, tiap sumber memiliki URL dasar dan konfigurasi JSON.
+
+| Sumber | Cara kerja | Halaman peraturan | PDF |
+|---|---|---|---|
+| JDIH BPK RI | Pencarian kata kunci per kategori (`/Search?keywords=…&p=N`) | `/Details/{id}/{slug}` | `/Download/{id}/{file}.pdf` |
+| JDIH Kemnaker | Menelusuri katalog terbaru (`/peraturan?page=N`), lalu klasifikasi lokal | `/peraturan/detail/{id}/{slug}` | `/asset/data_puu/….pdf` |
+
+Setiap sinkronisasi:
+1. mengambil daftar peraturan dan menyimpan **tautan ke halaman peraturan itu sendiri** (bukan halaman pencarian);
+2. membuka halaman tiap peraturan untuk mengambil **tautan PDF** dan status terkini (maks. `detail_limit` per sinkronisasi);
+3. (BPK) mencari halaman untuk peraturan yang belum tertaut, misalnya dari katalog awal, berdasarkan sitasinya (maks. `lookup_limit`).
+
+Peraturan yang sudah dicek tidak dicek ulang selama 30 hari. Dari panel detail sebuah peraturan, editor juga bisa
+menekan **Cari halaman & PDF di JDIH**, atau mengisi tautan halaman/PDF secara manual.
 
 | Kunci | Berlaku untuk | Arti |
 |---|---|---|
-| `keywords` | bpk, kemnaker | Daftar kata kunci pencarian (default: per kategori terpilih) |
-| `max_pages` | bpk, kemnaker | Jumlah halaman hasil per kata kunci (default 2) |
-| `search_url` | bpk, kemnaker | Template URL pencarian, placeholder `{base}`, `{q}`, `{page}` |
-| `link_pattern` | bpk, kemnaker | Regex href tautan detail peraturan pada halaman hasil |
+| `keywords` | bpk | Daftar kata kunci pencarian (default: per kategori terpilih) |
+| `max_pages` | bpk, kemnaker | Jumlah halaman hasil per kata kunci / halaman katalog (default 2 / 15) |
+| `search_url` | bpk, kemnaker | Template URL, placeholder `{base}`, `{q}` (kata kunci), `{page}` |
+| `link_pattern` | bpk, kemnaker | Regex href tautan halaman peraturan |
+| `pdf_pattern` | bpk, kemnaker | Regex tautan PDF (default: `.pdf` atau `/download/`) |
+| `detail_limit`, `lookup_limit` | bpk, kemnaker | Batas halaman detail / pencarian sitasi per sinkronisasi (default 30 / 20) |
+| `delay` | semua | Jeda antar-permintaan dalam detik (default 0.5) |
+| `user_agent` | semua | Ganti User-Agent bila situs menolak permintaan |
 | `feed_url` | jdihn | URL feed JSON integrasi JDIHN dari situs JDIH anggota |
 
-Konektor HTML bersifat heuristik (mencari tautan detail, sitasi "… Nomor X Tahun Y", teks "tentang …"
-dan label Berlaku/Dicabut). Jika situs JDIH mengubah tampilan, sesuaikan `search_url` / `link_pattern`
-tanpa mengubah kode. Bila akses langsung tidak tersedia, gunakan impor CSV
-(`jenis,nomor,tahun,judul,status,url,category`) atau JSON format JDIHN.
+### Jika sinkronisasi gagal
+Riwayat sinkronisasi menampilkan penyebabnya, misalnya `HTTP 403` (situs memblokir IP/bot), `HTTP 404`
+(alamat berubah), atau "tidak ada peraturan yang dikenali" (tampilan situs berubah). Untuk diagnosa:
+```bash
+flask --app run inspect-source bpk --keyword "keselamatan kerja"
+flask --app run inspect-source kemnaker
+flask --app run inspect-source bpk --detail https://peraturan.bpk.go.id/Details/145520/permenaker-no-6-tahun-2017
+```
+Perintah ini menampilkan hasil parsing dan menyimpan HTML mentah di `instance/debug-<sumber>.html`. Sesuaikan
+`search_url` / `link_pattern` / `pdf_pattern` tanpa mengubah kode. Bila akses langsung tetap tidak tersedia,
+gunakan impor CSV (`jenis,nomor,tahun,judul,status,url,category`) atau JSON format JDIHN.
 
 > **Catatan:** status berlaku pada katalog awal disusun sebagai titik awal dan harus diverifikasi
 > melalui sinkronisasi atau halaman JDIH resmi sebelum dijadikan dasar keputusan kepatuhan.

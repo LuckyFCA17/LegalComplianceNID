@@ -209,7 +209,9 @@ async function loadRegs() {
   state.selected.clear();
   $("#reg-table tbody").innerHTML = state.regs.map((r) => `<tr class="clickable" data-row="${r.id}">
       <td><input type="checkbox" data-sel="${r.id}" aria-label="Pilih"></td>
-      <td><div class="cit">${esc(r.citation)}</div><div class="judul">${esc(r.judul)}</div></td>
+      <td><div class="cit">${esc(r.citation)}${r.pdf_url ? ` <a class="pdf-chip" href="${esc(r.pdf_url)}" target="_blank" rel="noopener" title="Buka PDF">PDF</a>`
+        : r.url ? ` <a class="pdf-chip ghost" href="${esc(r.url)}" target="_blank" rel="noopener" title="Halaman peraturan">↗</a>` : ""}</div>
+        <div class="judul">${esc(r.judul)}</div></td>
       <td><select data-cat-of="${r.id}">${CATS.map((c) => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></td>
       <td><span class="badge ${r.status_berlaku}">${r.status_berlaku}</span></td>
       <td>${relCtl(r)}</td>
@@ -300,8 +302,24 @@ async function openDrawer(id) {
       <dt>Kategori</dt><dd>${esc(r.category)}${r.category_locked ? " <span class='muted'>(manual)</span>" : ""}</dd>
       <dt>Relevansi</dt><dd>${relCtl(r)}</dd>
       <dt>Catatan</dt><dd><textarea id="d-note" rows="2" style="width:100%" placeholder="Alasan relevan / tidak relevan">${esc(r.relevance_note)}</textarea></dd>
-      <dt>Sumber</dt><dd>${esc(r.source_name || "-")}${r.url ? ` · <a href="${esc(r.url)}" target="_blank" rel="noopener">buka di JDIH</a>` : ""}</dd>
+      <dt>Sumber data</dt><dd>${esc(r.source_name || "-")}</dd>
     </dl>
+    <div class="doclinks">
+      <h3>Dokumen peraturan</h3>
+      <div class="doc-actions">
+        ${r.url ? `<a class="button secondary" href="${esc(r.url)}" target="_blank" rel="noopener">↗ Halaman peraturan</a>`
+          : `<span class="muted">Belum tertaut ke halaman peraturan.</span>`}
+        ${r.pdf_url ? `<a class="button" href="${esc(r.pdf_url)}" target="_blank" rel="noopener">📄 Buka PDF</a>` : ""}
+        <a class="link" href="${esc(r.search_url)}" target="_blank" rel="noopener">Cari di JDIH BPK</a>
+      </div>
+      <div class="editor-only">
+        <button id="d-fetch" class="secondary">${r.url ? "Perbarui detail &amp; PDF dari JDIH" : "Cari halaman &amp; PDF di JDIH"}</button>
+        <details class="manual-links"><summary>Isi tautan manual</summary>
+          <label>Tautan halaman peraturan <input id="d-url" type="url" value="${esc(r.url)}" placeholder="https://peraturan.bpk.go.id/Details/..."></label>
+          <label>Tautan PDF <input id="d-pdf" type="url" value="${esc(r.pdf_url)}" placeholder="https://.../file.pdf"></label>
+        </details>
+      </div>
+    </div>
     <div class="card-head"><h2>Aktivitas pemenuhan (${r.obligations.length})</h2><button id="d-add-obl" class="secondary">+ Kewajiban</button></div>
     <div id="d-obls">${r.obligations.map(oblForm).join("") || `<p class="muted">Belum ada kewajiban. ${
       r.relevance !== "relevan" ? "Tandai regulasi sebagai relevan untuk mulai melacak pemenuhan." : ""}</p>`}</div>`;
@@ -333,6 +351,15 @@ $("#drawer-body").addEventListener("click", async (e) => {
     await api(`/api/regulations/${id}`, { method: "PATCH", body: { relevance: rel.dataset.rel, relevance_note: $("#d-note").value } });
     return openDrawer(id);
   }
+  if (e.target.id === "d-fetch") {
+    e.target.disabled = true;
+    e.target.textContent = "Menghubungi JDIH…";
+    try {
+      const r = await api(`/api/regulations/${id}/detail`, { method: "POST" });
+      toast(r.message);
+    } catch (err) { toast(err.message); }
+    return openDrawer(id);
+  }
   if (e.target.id === "d-add-obl") {
     await api(`/api/regulations/${id}/obligations`, { method: "POST", body: { description: "Kewajiban baru" } });
     return openDrawer(id);
@@ -348,6 +375,11 @@ $("#drawer-body").addEventListener("change", async (e) => {
     if (e.target.id === "d-status") {
       await api(`/api/regulations/${id}`, { method: "PATCH", body: { status_berlaku: e.target.value } });
       return toast("Status berlaku diperbarui");
+    }
+    if (e.target.id === "d-url" || e.target.id === "d-pdf") {
+      await api(`/api/regulations/${id}`, { method: "PATCH", body: { [e.target.id === "d-url" ? "url" : "pdf_url"]: e.target.value } });
+      toast("Tautan disimpan");
+      return openDrawer(id);
     }
     if (e.target.id === "d-note") {
       await api(`/api/regulations/${id}`, { method: "PATCH", body: { relevance_note: e.target.value } });

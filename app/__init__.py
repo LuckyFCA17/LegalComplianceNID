@@ -68,6 +68,46 @@ def create_app(config=None):
     app.register_blueprint(auth_bp)
     app.register_blueprint(bp)
 
+    @app.cli.command("inspect-source")
+    @click.argument("code")
+    @click.option("--keyword", default="keselamatan kerja", show_default=True)
+    @click.option("--detail", "detail_url", default=None, help="URL halaman peraturan untuk diuji")
+    def inspect_source_cmd(code, keyword, detail_url):
+        """Diagnosa konektor: ambil satu halaman, tampilkan hasil parsing, simpan HTML mentah."""
+        import json as _json
+        import re as _re
+
+        from .connectors import get_connector
+        from .connectors.base import ConnectorError
+        from .connectors.html_search import parse_detail, parse_results
+
+        src = dbmod.get_db().execute("SELECT * FROM sources WHERE code = ?", (code,)).fetchone()
+        if src is None:
+            raise click.ClickException(f"Sumber '{code}' tidak ada")
+        conn = get_connector(src["kind"], src["base_url"], _json.loads(src["config"] or "{}"))
+        url = detail_url or conn.search_url(keyword, 1)
+        click.echo(f"GET {url}")
+        try:
+            resp = conn.get(url)
+        except ConnectorError as exc:
+            raise click.ClickException(str(exc))
+        dump = os.path.join(app.instance_path, f"debug-{code}.html")
+        with open(dump, "w", encoding="utf-8") as f:
+            f.write(resp.text)
+        click.echo(f"HTTP {resp.status_code}, {len(resp.text)} byte — HTML disimpan di {dump}")
+        if detail_url:
+            click.echo(_json.dumps(parse_detail(resp.text, url, conn.pdf_pattern), indent=2, ensure_ascii=False))
+            return
+        pattern = conn.config.get("link_pattern") or conn.default_link_pattern
+        links = _re.findall(r'href="([^"]*)"', resp.text)
+        matching = [h for h in links if _re.search(pattern, h)]
+        click.echo(f"{len(links)} tautan, {len(matching)} cocok dengan link_pattern {pattern!r}")
+        records = parse_results(resp.text, url, pattern, conn.pdf_pattern)
+        click.echo(f"{len(records)} peraturan dikenali:")
+        for r in records[:10]:
+            click.echo(f"- {r['jenis']} {r['nomor']}/{r['tahun']} [{r['status_berlaku']}] {r['judul'][:70]}")
+            click.echo(f"    halaman: {r['url']}\n    pdf:     {r['pdf_url']}")
+
     @app.cli.command("create-user")
     @click.option("--email", prompt=True)
     @click.option("--name", default="")

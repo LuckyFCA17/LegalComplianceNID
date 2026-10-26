@@ -1,15 +1,24 @@
 """Connector interface: each connector yields normalised regulation dicts.
 
-A normalised record has keys: jenis, nomor, tahun, judul, status_berlaku, url,
-external_id (optional) and suggested (optional list of obligation dicts).
+A normalised record has keys: jenis, nomor, tahun, judul, status_berlaku, url (the
+regulation's own detail page), pdf_url, external_id (optional) and suggested
+(optional list of obligation dicts).
 """
+import time
 from urllib.parse import urlparse
 
 import requests
 
 from ..legal import normalize_jenis, normalize_status, parse_citation
 
-USER_AGENT = "LegalComplianceNID/1.0 (+compliance register; contact: admin)"
+# Some JDIH sites reject requests that do not look like a browser, so send browser-like headers.
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/124.0 Safari/537.36 LegalComplianceNID/1.1")
+DEFAULT_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+    "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
+}
 
 # Search keywords per category used when a connector has no explicit keyword list.
 DEFAULT_KEYWORDS = {
@@ -26,12 +35,17 @@ class ConnectorError(Exception):
 class Connector:
     kind = "base"
 
-    def __init__(self, base_url=None, config=None, session=None, timeout=20):
+    def __init__(self, base_url=None, config=None, session=None, timeout=25):
         self.base_url = (base_url or "").rstrip("/")
         self.config = config or {}
         self.session = session or requests.Session()
-        self.session.headers.setdefault("User-Agent", USER_AGENT)
+        self.session.headers.update(DEFAULT_HEADERS)
+        if self.config.get("user_agent"):
+            self.session.headers["User-Agent"] = self.config["user_agent"]
         self.timeout = timeout
+        self.delay = float(self.config.get("delay", 0.5))  # politeness pause between requests
+        self.errors = []  # non-fatal request errors collected during fetch()
+        self._last = 0.0
 
     def keywords(self, categories=None):
         explicit = self.config.get("keywords")
@@ -44,10 +58,20 @@ class Connector:
         return out
 
     def get(self, url, **kw):
+        wait = self._last + self.delay - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
         try:
             resp = self.session.get(url, timeout=self.timeout, **kw)
+            self._last = time.monotonic()
             resp.raise_for_status()
+        except requests.HTTPError as exc:
+            code = exc.response.status_code
+            hint = {403: " (akses ditolak situs — kemungkinan proteksi bot/IP)", 404: " (alamat tidak ditemukan — "
+                    "periksa search_url di konfigurasi sumber)"}.get(code, "")
+            raise ConnectorError(f"HTTP {code} dari {url}{hint}") from exc
         except requests.RequestException as exc:
+            self._last = time.monotonic()
             reason = str(exc)
             reason = reason if len(reason) <= 160 else reason[:160] + "…"
             raise ConnectorError(f"Gagal mengakses {urlparse(url).netloc}: {reason}") from exc
@@ -57,8 +81,23 @@ class Connector:
         """Yield normalised regulation dicts."""
         raise NotImplementedError
 
+    def owns(self, url):
+        """True when a stored detail URL belongs to this connector's site."""
+        return bool(url and self.base_url and urlparse(url).netloc == urlparse(self.base_url).netloc)
 
-def make_record(jenis, nomor, tahun, judul, status=None, url=None, external_id=None, suggested=None):
+    def fetch_detail(self, url):
+        """Open a regulation's own page; return dict with pdf_url / status / judul (any may be None)."""
+        return {}
+
+    supports_lookup = False
+
+    def lookup(self, jenis, nomor, tahun):
+        """Find the regulation's detail page on this site. Returns a record or None."""
+        return None
+
+
+def make_record(jenis, nomor, tahun, judul, status=None, url=None, external_id=None, suggested=None,
+                pdf_url=None):
     """Build a normalised record, or return None if mandatory parts are missing."""
     if not (jenis and nomor and judul):
         return None
@@ -75,6 +114,7 @@ def make_record(jenis, nomor, tahun, judul, status=None, url=None, external_id=N
         # Without an explicit status a sync must not overwrite a known Dicabut/Diubah.
         "status_explicit": bool(status),
         "url": url,
+        "pdf_url": pdf_url,
         "external_id": external_id,
         "suggested": suggested or [],
     }

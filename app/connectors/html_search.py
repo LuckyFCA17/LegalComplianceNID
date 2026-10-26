@@ -1,23 +1,34 @@
-"""Connectors that scrape the search result pages of JDIH websites.
+"""Connectors that scrape JDIH websites: search/listing pages and each regulation's own page.
 
-Government JDIH sites change their markup from time to time, so the parser is
-deliberately heuristic: it looks for links to detail pages whose text (or the
-surrounding result card) contains a citation like
-"Peraturan Menteri Ketenagakerjaan Nomor 5 Tahun 2018", then takes the
-"tentang ..." text and the Berlaku/Dicabut badge from the same card.
-URL templates and the detail-link pattern can be overridden per source in
-its JSON config without touching code.
+Government JDIH sites change their markup from time to time, so the parsers are
+deliberately heuristic:
+  * result pages — find links to detail pages whose text (or the surrounding result
+    card) contains a citation like "Peraturan Menteri Ketenagakerjaan Nomor 5 Tahun 2018",
+    then take the "tentang ..." text, the Berlaku/Dicabut badge and any PDF link;
+  * detail pages — read "Label: value" metadata (Status, Tentang/Judul) and the PDF link.
+URL templates and link patterns can be overridden per source in its JSON config.
+
+Known URL shapes (2026):
+  BPK      search  https://peraturan.bpk.go.id/Search?keywords=...&p=2
+           detail  https://peraturan.bpk.go.id/Details/145520/permenaker-no-6-tahun-2017
+           pdf     https://peraturan.bpk.go.id/Download/189838/Permenaker%20Nomor%2024%20Tahun%202021.pdf
+  Kemnaker list    https://jdih.kemnaker.go.id/peraturan?page=2
+           detail  https://jdih.kemnaker.go.id/peraturan/detail/1546/peraturan-menteri-...-nomor-5-tahun-2018
+           pdf     https://jdih.kemnaker.go.id/asset/data_puu/2025pmnaker013.pdf
 """
 import re
 from urllib.parse import quote_plus, urljoin
 
 from bs4 import BeautifulSoup
 
-from ..legal import CITATION_RE, parse_citation
-from .base import Connector, make_record
+from ..legal import CITATION_RE, normalize_status, parse_citation, reg_key
+from .base import Connector, ConnectorError, make_record
 
-STATUS_RE = re.compile(r"\b(dicabut|diubah|berlaku|tidak berlaku)\b", re.IGNORECASE)
+STATUS_RE = re.compile(r"\b(tidak berlaku|dicabut|diubah|berlaku)\b", re.IGNORECASE)
+# Phrases containing "berlaku" that are dates, not the legal status.
+NOT_STATUS_RE = re.compile(r"(tanggal|tgl\.?|mulai|masa)\s+berlaku", re.IGNORECASE)
 CITATION_HEAD_RE = re.compile(r"(.{3,120}?)\s+(?:nomor|no\.?)\s*[\w./\-]+\s+tahun\s+\d{4}", re.IGNORECASE)
+DEFAULT_PDF_PATTERN = r"(?i)(\.pdf(\?|#|$)|/download/)"
 
 
 def _card_for(anchor, max_up=5):
@@ -38,7 +49,28 @@ def _lines(node):
     return [" ".join(t.split()) for t in node.stripped_strings if t.strip()]
 
 
-def parse_results(html, page_url, link_pattern):
+def _status_in(node):
+    """Legal status shown in a node: prefer badge-like elements, then free text."""
+    for el in node.find_all(class_=re.compile(r"badge|label|status|tag", re.IGNORECASE)):
+        m = STATUS_RE.fullmatch(" ".join(el.get_text(" ").split()))
+        if m:
+            return m.group(1)
+    text = NOT_STATUS_RE.sub(" ", " ".join(_lines(node)))
+    m = STATUS_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _pdf_link(node, page_url, pdf_pattern):
+    rx = re.compile(pdf_pattern)
+    for tag, attr in (("a", "href"), ("iframe", "src"), ("embed", "src"), ("object", "data")):
+        for el in node.find_all(tag, **{attr: True}):
+            target = el[attr]
+            if rx.search(target):
+                return urljoin(page_url, target.strip())
+    return None
+
+
+def parse_results(html, page_url, link_pattern, pdf_pattern=DEFAULT_PDF_PATTERN):
     soup = BeautifulSoup(html, "html.parser")
     link_re = re.compile(link_pattern)
     seen = set()
@@ -71,8 +103,7 @@ def parse_results(html, page_url, link_pattern):
         judul = parsed["judul"]
         if not judul:
             for line in lines:
-                low = line.lower()
-                if low.startswith("tentang "):
+                if line.lower().startswith("tentang "):
                     judul = line[8:]
                     break
             if not judul:
@@ -80,36 +111,112 @@ def parse_results(html, page_url, link_pattern):
                 candidates = [ln for ln in lines if not CITATION_RE.match(ln)
                               and not STATUS_RE.fullmatch(ln) and len(ln) > 15]
                 judul = max(candidates, key=len) if candidates else ""
-        status_m = STATUS_RE.search(text_blob)
         rec = make_record(parsed["jenis"], parsed["nomor"], parsed["tahun"], judul,
-                          status=status_m.group(1) if status_m else None,
-                          url=url, external_id=href)
+                          status=_status_in(card), url=url, external_id=href,
+                          pdf_url=_pdf_link(card, page_url, pdf_pattern))
         if rec:
             seen.add(url)
             records.append(rec)
     return records
 
 
+def _labelled(lines, labels):
+    """Value following a metadata label, from 'Label: value' or 'Label' / ':' / 'value' line runs."""
+    labels = [l.lower() for l in labels]
+    for i, line in enumerate(lines):
+        low = line.lower().rstrip(" :").strip()
+        for lab in labels:
+            if low == lab:
+                for nxt in lines[i + 1:i + 3]:
+                    val = nxt.lstrip(": ").strip()
+                    if val:
+                        return val
+            m = re.match(rf"^{re.escape(lab)}\s*:\s*(.+)$", line, re.IGNORECASE)
+            if m:
+                return m.group(1).strip()
+    return None
+
+
+def parse_detail(html, page_url, pdf_pattern=DEFAULT_PDF_PATTERN):
+    """Extract PDF link, legal status and title from a regulation's own page."""
+    soup = BeautifulSoup(html, "html.parser")
+    for junk in soup(["script", "style", "nav", "footer", "header"]):
+        junk.decompose()
+    lines = _lines(soup)
+    status = _labelled(lines, ["Status", "Status Peraturan", "Keterangan Status"])
+    if status and not STATUS_RE.search(status):
+        status = None
+    judul = _labelled(lines, ["Tentang", "Judul", "T.E.U.", "Judul Peraturan"])
+    if judul:
+        parsed = parse_citation(judul)
+        judul = parsed["judul"] if parsed and parsed["judul"] else judul
+    return {
+        "pdf_url": _pdf_link(soup, page_url, pdf_pattern),
+        "status": normalize_status(status) if status else None,
+        "judul": judul,
+    }
+
+
 class HtmlSearchConnector(Connector):
     kind = "html"
     default_search_url = ""
     default_link_pattern = r"detail"
+    default_max_pages = 2
+
+    @property
+    def search_template(self):
+        return self.config.get("search_url") or self.default_search_url
+
+    @property
+    def pdf_pattern(self):
+        return self.config.get("pdf_pattern") or DEFAULT_PDF_PATTERN
 
     def search_url(self, keyword, page):
-        tmpl = self.config.get("search_url") or self.default_search_url
-        return tmpl.format(base=self.base_url, q=quote_plus(keyword), page=page)
+        return self.search_template.format(base=self.base_url, q=quote_plus(keyword or ""), page=page)
+
+    def _pages(self, keyword):
+        pattern = self.config.get("link_pattern") or self.default_link_pattern
+        max_pages = int(self.config.get("max_pages", self.default_max_pages))
+        for page in range(1, max_pages + 1):
+            url = self.search_url(keyword, page)
+            try:
+                html = self.get(url).text
+            except ConnectorError as exc:
+                self.errors.append(str(exc))
+                return
+            records = parse_results(html, url, pattern, self.pdf_pattern)
+            if not records:
+                if page == 1:
+                    self.errors.append(f"Tidak ada peraturan yang dikenali di {url} — tampilan situs mungkin "
+                                       "berubah; sesuaikan link_pattern/search_url")
+                return
+            yield from records
 
     def fetch(self, categories=None):
-        pattern = self.config.get("link_pattern") or self.default_link_pattern
-        max_pages = int(self.config.get("max_pages", 2))
+        if "{q}" not in self.search_template:
+            # Listing without keyword search: walk the newest pages once and classify locally.
+            yield from self._pages(None)
+            return
         for kw in self.keywords(categories):
-            for page in range(1, max_pages + 1):
-                url = self.search_url(kw, page)
-                html = self.get(url).text
-                records = parse_results(html, url, pattern)
-                if not records:
-                    break
-                yield from records
+            yield from self._pages(kw)
+
+    @property
+    def supports_lookup(self):
+        return "{q}" in self.search_template
+
+    def fetch_detail(self, url):
+        return parse_detail(self.get(url).text, url, self.pdf_pattern)
+
+    def lookup(self, jenis, nomor, tahun):
+        if not self.supports_lookup:
+            return None
+        key = reg_key(jenis, nomor, tahun)
+        pattern = self.config.get("link_pattern") or self.default_link_pattern
+        url = self.search_url(f"{jenis} nomor {nomor} tahun {tahun}", 1)
+        for rec in parse_results(self.get(url).text, url, pattern, self.pdf_pattern):
+            if reg_key(rec["jenis"], rec["nomor"], rec["tahun"]) == key:
+                return rec
+        return None
 
 
 class BpkConnector(HtmlSearchConnector):
@@ -120,7 +227,13 @@ class BpkConnector(HtmlSearchConnector):
 
 
 class KemnakerConnector(HtmlSearchConnector):
-    """JDIH Kementerian Ketenagakerjaan — https://jdih.kemnaker.go.id."""
+    """JDIH Kementerian Ketenagakerjaan — https://jdih.kemnaker.go.id.
+
+    The public catalogue is a paginated list (/peraturan?page=N, newest first). Its keyword
+    parameter is not documented, so by default the connector walks the list and classifies
+    locally; set "search_url" with a {q} placeholder in the source config to search instead.
+    """
     kind = "kemnaker"
-    default_search_url = "{base}/katalog-peraturan?search={q}&page={page}"
-    default_link_pattern = r"(detail|peraturan)[-/]"
+    default_search_url = "{base}/peraturan?page={page}"
+    default_link_pattern = r"/peraturan/detail/\d+"
+    default_max_pages = 15

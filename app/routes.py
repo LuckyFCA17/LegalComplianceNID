@@ -3,6 +3,7 @@ import csv
 import io
 import json
 from datetime import date
+from urllib.parse import quote_plus, urlparse
 
 from flask import Blueprint, Response, abort, current_app, jsonify, request, send_from_directory
 
@@ -10,7 +11,9 @@ from .connectors.base import make_record
 from .connectors.jdihn import parse_feed
 from .db import get_db, now
 from .legal import CATEGORIES, citation
-from .sync import apply_suggestions, run_sync, upsert_regulation
+from .connectors import get_connector
+from .connectors.base import ConnectorError
+from .sync import apply_suggestions, resolve_regulation, run_sync, upsert_regulation
 
 bp = Blueprint("api", __name__)
 
@@ -34,6 +37,8 @@ def _reg_dict(row, with_counts=None):
     d = dict(row)
     d["suggested"] = json.loads(d.get("suggested") or "[]")
     d["citation"] = citation(row)
+    d["search_url"] = "https://peraturan.bpk.go.id/Search?keywords=" + quote_plus(
+        f"{row['jenis']} nomor {row['nomor']} tahun {row['tahun']}")
     if with_counts:
         d.update(with_counts)
     return d
@@ -184,6 +189,12 @@ def update_regulation(rid):
             abort(400, "Kategori tidak valid")
         db.execute("UPDATE regulations SET category = ?, category_locked = 1, updated_at = ? WHERE id = ?",
                    (data["category"], now(), rid))
+    for field in ("url", "pdf_url"):
+        if field in data:
+            val = (data[field] or "").strip() or None
+            if val and urlparse(val).scheme not in ("http", "https"):
+                abort(400, "Tautan harus diawali http:// atau https://")
+            db.execute(f"UPDATE regulations SET {field} = ?, updated_at = ? WHERE id = ?", (val, now(), rid))
     if "status_berlaku" in data:
         if data["status_berlaku"] not in REG_STATUS:
             abort(400, "Status berlaku tidak valid")
@@ -191,6 +202,41 @@ def update_regulation(rid):
                    (data["status_berlaku"], now(), rid))
     db.commit()
     return get_regulation(rid)
+
+
+@bp.post("/api/regulations/<int:rid>/detail")
+def fetch_regulation_detail(rid):
+    """Open the regulation's own JDIH page (finding it first if needed) to get its PDF and status."""
+    db = get_db()
+    row = _get_reg(rid)
+    sources = db.execute("SELECT * FROM sources WHERE kind IN ('bpk', 'kemnaker', 'html') "
+                         "ORDER BY enabled DESC, id").fetchall()
+    errors, changed = [], False
+    for src in sources:
+        conn = get_connector(src["kind"], src["base_url"], json.loads(src["config"] or "{}"))
+        if row["url"] and not conn.owns(row["url"]):
+            continue
+        if not row["url"] and not conn.supports_lookup:
+            continue
+        try:
+            changed = resolve_regulation(db, conn, row)
+            db.commit()
+            row = _get_reg(rid)
+            if row["pdf_url"]:
+                break
+        except ConnectorError as exc:
+            errors.append(str(exc))
+    out = get_regulation(rid).get_json()
+    if row["pdf_url"]:
+        out["message"] = "Halaman peraturan dan PDF ditemukan"
+    elif errors:
+        out["message"] = "Gagal menghubungi JDIH: " + errors[0]
+    elif row["url"]:
+        out["message"] = "Halaman peraturan ditemukan, tetapi tautan PDF tidak terdeteksi"
+    else:
+        out["message"] = "Peraturan tidak ditemukan di JDIH. Isi tautan secara manual."
+    out["changed"] = changed
+    return jsonify(out)
 
 
 @bp.post("/api/regulations/bulk")
