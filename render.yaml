@@ -1,0 +1,32 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# A persistent disk keeps the SQLite database across deploys; disks need a paid instance type.
+services:
+  - type: web
+    name: legal-compliance-nid
+    runtime: python
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -c gunicorn.conf.py run:app
+    healthCheckPath: /healthz
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: LCN_DATABASE
+        value: /var/data/compliance.db
+      - key: LCN_SECURE_COOKIES
+        value: "1"
+      - key: LCN_BEHIND_PROXY
+        value: "1"
+      - key: LCN_REQUIRE_ENV_ADMIN
+        value: "1"

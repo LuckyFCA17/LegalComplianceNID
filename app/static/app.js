@@ -13,7 +13,17 @@ const REL = {
   tidak_relevan: { label: "Tidak relevan", color: "var(--na)" },
 };
 
-const state = { cats: loadCats(), tab: "dashboard", regs: [], selected: new Set() };
+const state = { cats: loadCats(), tab: "dashboard", regs: [], selected: new Set(), me: null };
+const canEdit = () => state.me && state.me.role !== "viewer";
+const isAdmin = () => state.me && state.me.role === "admin";
+
+/* Disable editing controls for viewers (the server enforces the same rules). */
+function lock(root) {
+  if (canEdit()) return;
+  root.querySelectorAll("input:not([type=search]), select, textarea, button:not(.close)").forEach((el) => {
+    if (!el.closest(".toolbar")) el.disabled = true;
+  });
+}
 
 function loadCats() {
   try {
@@ -37,6 +47,10 @@ async function api(path, opts = {}) {
     init.body = JSON.stringify(opts.body);
   }
   const res = await fetch(path, init);
+  if (res.status === 401) {
+    location.href = "/login";
+    throw new Error("Sesi berakhir, silakan login kembali");
+  }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
@@ -89,11 +103,13 @@ document.querySelector(".tabs").addEventListener("click", (e) => {
   state.tab = t;
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
   document.querySelectorAll(".tab").forEach((s) => s.classList.toggle("active", s.id === "tab-" + t));
+  $(".catbar").hidden = t === "pengguna";
   refresh();
 });
 
 function refresh() {
-  ({ dashboard: loadDashboard, regulasi: loadRegs, pemenuhan: loadObligations, sumber: loadSources })[state.tab]();
+  ({ dashboard: loadDashboard, regulasi: loadRegs, pemenuhan: loadObligations, sumber: loadSources,
+     pengguna: loadUsers })[state.tab]();
 }
 
 /* ---------------------------------------------------------------- dashboard */
@@ -200,6 +216,7 @@ async function loadRegs() {
       <td>${r.relevance === "relevan" ? progress(r.obl_done, r.obl_total, r.obl_na) : ""}</td></tr>`).join("") ||
     `<tr><td colspan="6" class="muted">Tidak ada regulasi untuk filter ini.</td></tr>`;
   $("#reg-count").textContent = `${state.regs.length} regulasi`;
+  lock($("#reg-table"));
   $("#reg-all").checked = false;
   updateBulk();
 }
@@ -290,6 +307,7 @@ async function openDrawer(id) {
       r.relevance !== "relevan" ? "Tandai regulasi sebagai relevan untuk mulai melacak pemenuhan." : ""}</p>`}</div>`;
   $("#drawer").hidden = false;
   body.dataset.id = id;
+  lock(body);
 }
 function oblForm(o) {
   return `<div class="obl" data-obl="${o.id}">
@@ -359,6 +377,7 @@ async function loadObligations() {
       <td><input type="text" name="evidence" value="${esc(o.evidence)}" placeholder="Bukti"></td></tr>`).join("") ||
     `<tr><td colspan="6" class="muted">Belum ada kewajiban. Tandai regulasi sebagai relevan di tab Regulasi.</td></tr>`;
   $("#obl-count").textContent = `${rows.length} kewajiban dari regulasi relevan`;
+  lock($("#obl-table"));
 }
 $("#obl-table").addEventListener("change", async (e) => {
   const tr = e.target.closest("[data-obl]");
@@ -383,6 +402,11 @@ async function loadSources() {
       <div class="actions">${s.kind === "seed" ? "" : `<button class="secondary" data-save="${s.id}">Simpan</button>`}
         <button data-sync="${s.id}">Sinkronkan</button></div>
     </div>`).join("");
+  if (!isAdmin()) {
+    // Only admins may change source settings; editors may still run a sync.
+    $("#sources").querySelectorAll("input, textarea, [data-save]").forEach((el) => (el.disabled = true));
+  }
+  if (!canEdit()) $("#sources").querySelectorAll("[data-sync]").forEach((el) => (el.disabled = true));
   $("#sync-log tbody").innerHTML = log.map((l) => `<tr><td>${fmtDate(l.started_at)}</td><td>${esc(l.source_name)}</td>
     <td>${l.status === "ok" ? "✓ OK" : "✕ Gagal"}</td><td>${esc(l.message)}</td></tr>`).join("") ||
     `<tr><td colspan="4" class="muted">Belum ada riwayat.</td></tr>`;
@@ -419,5 +443,64 @@ $("#sources").addEventListener("change", async (e) => {
   toast(e.target.checked ? "Sumber diaktifkan" : "Sumber dinonaktifkan");
 });
 
-renderChips();
-refresh();
+/* ---------------------------------------------------------------- users & account */
+const ROLE_LABEL = { admin: "Admin", editor: "Editor", viewer: "Viewer" };
+async function loadUsers() {
+  const users = await api("/api/users");
+  $("#user-table tbody").innerHTML = users.map((u) => `<tr data-user="${u.id}">
+    <td>${esc(u.name)}</td><td>${esc(u.email)}</td>
+    <td><select name="role" ${u.id === state.me.id ? "disabled" : ""}>${Object.entries(ROLE_LABEL).map(([k, l]) =>
+      `<option value="${k}" ${k === u.role ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+    <td><input type="checkbox" name="active" ${u.active ? "checked" : ""} ${u.id === state.me.id ? "disabled" : ""} aria-label="Aktif"></td>
+    <td>${u.last_login ? fmtDate(u.last_login) : "—"}</td>
+    <td><button class="link" data-reset="${u.id}">Reset password</button></td></tr>`).join("");
+}
+$("#user-table").addEventListener("change", async (e) => {
+  const tr = e.target.closest("[data-user]");
+  if (!tr) return;
+  const body = e.target.name === "active" ? { active: e.target.checked } : { role: e.target.value };
+  try { await api(`/api/users/${tr.dataset.user}`, { method: "PATCH", body }); toast("Pengguna diperbarui"); }
+  catch (err) { toast(err.message); loadUsers(); }
+});
+$("#user-table").addEventListener("click", async (e) => {
+  const id = e.target.dataset.reset;
+  if (!id) return;
+  const pw = prompt("Password baru (min. 8 karakter):");
+  if (!pw) return;
+  try { await api(`/api/users/${id}`, { method: "PATCH", body: { password: pw } }); toast("Password direset"); }
+  catch (err) { toast(err.message); }
+});
+$("#form-user").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("/api/users", { method: "POST", body: Object.fromEntries(new FormData(e.target)) });
+    e.target.reset();
+    toast("Pengguna ditambahkan");
+    loadUsers();
+  } catch (err) { toast(err.message); }
+});
+
+const dlgPw = $("#dlg-password");
+$("#btn-password").addEventListener("click", () => dlgPw.showModal());
+dlgPw.addEventListener("close", async () => {
+  if (dlgPw.returnValue !== "ok") return;
+  try {
+    await api("/api/auth/password", { method: "POST", body: Object.fromEntries(new FormData($("#form-password"))) });
+    toast("Password diganti");
+  } catch (err) { toast(err.message); }
+  $("#form-password").reset();
+});
+$("#btn-logout").addEventListener("click", async () => {
+  await api("/api/auth/logout", { method: "POST" });
+  location.href = "/login";
+});
+
+(async () => {
+  state.me = await api("/api/auth/me");
+  document.body.dataset.role = state.me.role;
+  $("#me-name").textContent = state.me.name;
+  $("#me-role").textContent = ROLE_LABEL[state.me.role];
+  document.querySelectorAll(".admin-only").forEach((el) => (el.hidden = !isAdmin()));
+  renderChips();
+  refresh();
+})();

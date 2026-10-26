@@ -19,7 +19,14 @@ def app(tmp_path):
 
 @pytest.fixture
 def client(app):
-    return app.test_client()
+    """A client logged in as admin."""
+    c = app.test_client()
+    with app.app_context():
+        from app.auth import create_user
+        from app.db import get_db
+        create_user(get_db(), "admin@example.com", "Admin", "rahasia123", "admin")
+    assert c.post("/api/auth/login", json={"email": "admin@example.com", "password": "rahasia123"}).status_code == 200
+    return c
 
 
 def _find(client, judul):

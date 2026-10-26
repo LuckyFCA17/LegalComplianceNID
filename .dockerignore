@@ -1,0 +1,6 @@
+.venv
+.git
+__pycache__
+instance/*.db*
+instance/secret_key
+.pytest_cache

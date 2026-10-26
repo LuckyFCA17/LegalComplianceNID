@@ -20,7 +20,13 @@
     <button role="tab" data-tab="regulasi">Regulasi</button>
     <button role="tab" data-tab="pemenuhan">Pemenuhan</button>
     <button role="tab" data-tab="sumber">Sumber Data</button>
+    <button role="tab" data-tab="pengguna" class="admin-only" hidden>Pengguna</button>
   </nav>
+  <div class="usermenu">
+    <span id="me-name"></span> <span id="me-role" class="badge-role"></span>
+    <button class="link" id="btn-password">Ganti password</button>
+    <button class="secondary" id="btn-logout">Keluar</button>
+  </div>
 </header>
 
 <div class="catbar">
@@ -71,8 +77,8 @@
         <option>Berlaku</option><option>Diubah</option><option>Dicabut</option>
       </select>
       <span class="spacer"></span>
-      <button id="btn-add-reg" class="secondary">+ Tambah manual</button>
-      <label class="secondary button">Impor CSV/JSON<input type="file" id="import-file" accept=".csv,.json" hidden></label>
+      <button id="btn-add-reg" class="secondary editor-only">+ Tambah manual</button>
+      <label class="secondary button editor-only">Impor CSV/JSON<input type="file" id="import-file" accept=".csv,.json" hidden></label>
     </div>
     <div class="bulkbar" id="bulkbar" hidden>
       <span id="bulk-count"></span>
@@ -121,7 +127,7 @@
     <div class="toolbar">
       <p class="muted">Sinkronisasi menarik daftar peraturan dari situs JDIH sesuai kategori terpilih. Keputusan relevansi &amp; data pemenuhan tidak akan tertimpa.</p>
       <span class="spacer"></span>
-      <button id="btn-sync-all">Sinkronkan semua sumber aktif</button>
+      <button id="btn-sync-all" class="editor-only">Sinkronkan semua sumber aktif</button>
     </div>
     <div id="sources" class="sources"></div>
     <div class="card">
@@ -129,7 +135,44 @@
       <div class="table-wrap"><table class="data" id="sync-log"><thead><tr><th>Waktu</th><th>Sumber</th><th>Status</th><th>Pesan</th></tr></thead><tbody></tbody></table></div>
     </div>
   </section>
+
+  <!-- PENGGUNA (admin) -->
+  <section id="tab-pengguna" class="tab">
+    <div class="grid2">
+      <div class="card flush">
+        <div class="table-wrap">
+          <table class="data" id="user-table">
+            <thead><tr><th>Nama</th><th>Email</th><th>Peran</th><th>Aktif</th><th>Login terakhir</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Tambah pengguna</h2>
+        <form id="form-user" class="form">
+          <label>Nama <input name="name" required></label>
+          <label>Email <input name="email" type="email" required></label>
+          <label>Peran <select name="role">
+            <option value="viewer">Viewer — hanya melihat</option>
+            <option value="editor">Editor — menilai relevansi &amp; mengisi pemenuhan</option>
+            <option value="admin">Admin — semua akses + kelola pengguna &amp; sumber</option>
+          </select></label>
+          <label>Password awal (min. 8 karakter) <input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+          <div class="actions"><button type="submit">Tambah</button></div>
+        </form>
+      </div>
+    </div>
+  </section>
 </main>
+
+<dialog id="dlg-password">
+  <form method="dialog" id="form-password" class="form">
+    <h2>Ganti password</h2>
+    <label>Password saat ini <input name="current" type="password" required autocomplete="current-password"></label>
+    <label>Password baru (min. 8 karakter) <input name="new" type="password" minlength="8" required autocomplete="new-password"></label>
+    <div class="actions"><button value="cancel" class="secondary" formnovalidate>Batal</button><button value="ok">Simpan</button></div>
+  </form>
+</dialog>
 
 <!-- Detail drawer -->
 <aside id="drawer" class="drawer" hidden aria-modal="true" role="dialog">

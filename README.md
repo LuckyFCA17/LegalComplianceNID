@@ -25,6 +25,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 python run.py                # buka http://localhost:5000
 ```
+Saat pertama dibuka, Anda diminta membuat akun admin.
 Database SQLite dibuat di `instance/compliance.db` (ubah dengan env `LCN_DATABASE`) dan diisi katalog awal saat pertama kali dijalankan.
 
 Sinkronisasi dari CLI (cocok untuk cron/penjadwalan rutin):
@@ -37,6 +38,58 @@ Tes:
 ```bash
 pytest -q
 ```
+
+## Login & peran pengguna
+Semua halaman memerlukan login. Ada tiga peran:
+
+| Peran | Hak akses |
+|---|---|
+| **Admin** | Semua akses, termasuk kelola pengguna (tab *Pengguna*) dan konfigurasi sumber data |
+| **Editor** | Menilai relevansi, mengisi kewajiban & status pemenuhan, impor, menjalankan sinkronisasi |
+| **Viewer** | Hanya melihat dashboard/daftar dan mengekspor CSV |
+
+Admin pertama dibuat dengan salah satu cara berikut:
+- variabel lingkungan `ADMIN_EMAIL` + `ADMIN_PASSWORD` (dibuat otomatis saat start bila belum ada pengguna) — **wajib untuk server online**;
+- halaman setup di browser saat pertama kali dibuka (hanya bila `LCN_REQUIRE_ENV_ADMIN` tidak aktif, cocok untuk pemakaian lokal);
+- CLI: `flask --app run create-user --email admin@perusahaan.co.id --role admin`.
+
+Login gagal 10 kali dalam 15 menit dari IP yang sama akan diblokir sementara.
+
+## Deploy online (Render)
+File `render.yaml` sudah disiapkan (Render Blueprint, region Singapura, disk persisten 1 GB untuk database).
+
+1. Buat akun di https://render.com dan hubungkan dengan akun GitHub.
+2. Pilih **New → Blueprint**, pilih repositori ini dan branch yang berisi aplikasi.
+3. Render akan meminta nilai **`ADMIN_EMAIL`** dan **`ADMIN_PASSWORD`** — isi dengan akun admin Anda (password kuat, min. 8 karakter). `SECRET_KEY` dibuat otomatis.
+4. Klik **Apply**. Setelah build selesai, aplikasi tersedia di `https://legal-compliance-nid.onrender.com` (atau nama yang Anda pilih) dan bisa dibuka dari laptop, tablet, maupun ponsel.
+5. Login sebagai admin, lalu tambahkan akun tim di tab **Pengguna**.
+
+Catatan biaya: disk persisten hanya tersedia pada instance berbayar (paket *Starter*). Paket gratis
+Render tidak menyimpan file sehingga database akan hilang setiap restart/deploy — jangan gunakan untuk data nyata.
+
+Variabel lingkungan yang dipakai:
+
+| Variabel | Fungsi |
+|---|---|
+| `SECRET_KEY` | Kunci tanda tangan sesi (bila kosong dibuat acak & disimpan di samping database) |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Akun admin pertama |
+| `LCN_DATABASE` | Lokasi file SQLite (di Render: `/var/data/compliance.db`) |
+| `LCN_SECURE_COOKIES=1` | Cookie sesi hanya lewat HTTPS |
+| `LCN_BEHIND_PROXY=1` | Percayai header `X-Forwarded-*` dari load balancer |
+| `LCN_REQUIRE_ENV_ADMIN=1` | Matikan halaman setup admin di browser |
+| `WEB_CONCURRENCY` | Jumlah worker gunicorn (default 2) |
+
+**Alternatif lain:** `Dockerfile` tersedia untuk Railway, Fly.io, VPS, atau server kantor:
+```bash
+docker build -t legal-compliance .
+docker run -d -p 8000:8000 -v lcn-data:/data \
+  -e ADMIN_EMAIL=admin@perusahaan.co.id -e ADMIN_PASSWORD='ganti-password-kuat' \
+  -e LCN_REQUIRE_ENV_ADMIN=1 legal-compliance
+```
+Pasang di belakang HTTPS (reverse proxy) dan set `LCN_SECURE_COOKIES=1` + `LCN_BEHIND_PROXY=1`.
+
+**Backup:** salin file database (`/var/data/compliance.db`) secara berkala, misalnya lewat *Shell* di dashboard Render:
+`sqlite3 /var/data/compliance.db ".backup /var/data/backup.db"`.
 
 ## Konfigurasi sumber data
 Di tab **Sumber Data**, tiap sumber memiliki URL dasar dan konfigurasi JSON:
@@ -60,7 +113,8 @@ tanpa mengubah kode. Bila akses langsung tidak tersedia, gunakan impor CSV
 ## Struktur
 ```
 app/
-  __init__.py        app factory + perintah CLI `sync`
+  __init__.py        app factory + perintah CLI `sync` dan `create-user`
+  auth.py            login, sesi, peran (admin/editor/viewer), kelola pengguna
   db.py              skema SQLite
   legal.py           parsing sitasi, normalisasi jenis, klasifikasi kategori
   sync.py            sinkronisasi & upsert (menjaga keputusan pengguna)

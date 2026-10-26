@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS obligations (
 );
 CREATE INDEX IF NOT EXISTS ix_obl_reg ON obligations(regulation_id);
 
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY,
+    email         TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    name          TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'viewer', -- admin | editor | viewer
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL,
+    last_login    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sync_log (
     id         INTEGER PRIMARY KEY,
     source_id  INTEGER REFERENCES sources(id),
@@ -72,7 +83,7 @@ def now():
 
 
 def connect(path):
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -91,5 +102,6 @@ def close_db(_exc=None):
 
 
 def init_db(conn):
+    conn.execute("PRAGMA journal_mode = WAL")  # lets several web workers read while one writes
     conn.executescript(SCHEMA)
     conn.commit()

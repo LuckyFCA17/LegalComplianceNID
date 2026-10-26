@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masuk · Legal Compliance</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+<main class="login-card card">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">§</span>
+    <div><h1>Legal Compliance</h1><p class="sub">Register peraturan &amp; status pemenuhan</p></div>
+  </div>
+
+  <form id="form-login" class="form" hidden>
+    <h2>Masuk</h2>
+    <label>Email <input name="email" type="email" autocomplete="username" required autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <p class="error" role="alert"></p>
+    <div class="actions"><button type="submit">Masuk</button></div>
+  </form>
+
+  <form id="form-setup" class="form" hidden>
+    <h2>Buat akun admin pertama</h2>
+    <p class="muted">Belum ada pengguna. Akun ini akan menjadi administrator.</p>
+    <label>Nama <input name="name" required></label>
+    <label>Email <input name="email" type="email" autocomplete="username" required></label>
+    <label>Password (min. 8 karakter) <input name="password" type="password" minlength="8" autocomplete="new-password" required></label>
+    <p class="error" role="alert"></p>
+    <div class="actions"><button type="submit">Buat akun &amp; masuk</button></div>
+  </form>
+</main>
+<script>
+(async () => {
+  const st = await fetch("/api/auth/status").then((r) => r.json());
+  if (st.user) return location.replace("/");
+  const form = document.getElementById(st.setup_required ? "form-setup" : "form-login");
+  form.hidden = false;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector("button");
+    btn.disabled = true;
+    const res = await fetch(st.setup_required ? "/api/auth/setup" : "/api/auth/login", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(new FormData(form))),
+    });
+    btn.disabled = false;
+    if (res.ok) return location.replace("/");
+    const data = await res.json().catch(() => ({}));
+    form.querySelector(".error").textContent = data.error || "Gagal masuk";
+  });
+})();
+</script>
+</body>
+</html>
