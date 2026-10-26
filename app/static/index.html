@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Legal Compliance NID</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">§</span>
+    <div>
+      <h1>Legal Compliance</h1>
+      <p class="sub">Register peraturan perundang-undangan &amp; status pemenuhan</p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="dashboard" class="active">Dashboard</button>
+    <button role="tab" data-tab="regulasi">Regulasi</button>
+    <button role="tab" data-tab="pemenuhan">Pemenuhan</button>
+    <button role="tab" data-tab="sumber">Sumber Data</button>
+  </nav>
+</header>
+
+<div class="catbar">
+  <span class="catbar-label">Kategori regulasi:</span>
+  <div id="cat-chips" class="chips" role="group" aria-label="Pilih kategori"></div>
+</div>
+
+<main>
+  <!-- DASHBOARD -->
+  <section id="tab-dashboard" class="tab active">
+    <div id="stat-tiles" class="tiles"></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="card-head">
+          <h2>Progres pemenuhan per kategori</h2>
+          <button class="link" id="toggle-table">Tampilkan tabel</button>
+        </div>
+        <div id="status-legend" class="legend"></div>
+        <div id="cat-chart" class="hbars"></div>
+        <div id="cat-table" hidden></div>
+      </div>
+      <div class="card">
+        <h2>Penilaian relevansi regulasi <small>(% sudah dinilai)</small></h2>
+        <div id="relevance-chart" class="hbars"></div>
+        <h3 class="mt">Status sinkronisasi sumber</h3>
+        <ul id="source-status" class="plain"></ul>
+      </div>
+    </div>
+    <div class="grid3">
+      <div class="card"><h2>Kewajiban lewat tenggat</h2><ul id="overdue" class="plain"></ul></div>
+      <div class="card"><h2>Perlu ditinjau <small>(relevan tapi diubah/dicabut)</small></h2><ul id="review" class="plain"></ul></div>
+      <div class="card"><h2>Relevan tanpa kewajiban</h2><ul id="no-obl" class="plain"></ul></div>
+    </div>
+  </section>
+
+  <!-- REGULASI -->
+  <section id="tab-regulasi" class="tab">
+    <div class="toolbar">
+      <input type="search" id="reg-q" placeholder="Cari judul / nomor / tahun…">
+      <select id="reg-relevance">
+        <option value="">Semua relevansi</option>
+        <option value="pending">Belum dinilai</option>
+        <option value="relevan">Relevan</option>
+        <option value="tidak_relevan">Tidak relevan</option>
+      </select>
+      <select id="reg-status">
+        <option value="">Semua status</option>
+        <option>Berlaku</option><option>Diubah</option><option>Dicabut</option>
+      </select>
+      <span class="spacer"></span>
+      <button id="btn-add-reg" class="secondary">+ Tambah manual</button>
+      <label class="secondary button">Impor CSV/JSON<input type="file" id="import-file" accept=".csv,.json" hidden></label>
+    </div>
+    <div class="bulkbar" id="bulkbar" hidden>
+      <span id="bulk-count"></span>
+      <button data-bulk="relevan">Tandai relevan</button>
+      <button data-bulk="tidak_relevan">Tandai tidak relevan</button>
+      <button data-bulk="pending">Reset</button>
+    </div>
+    <div class="card flush">
+      <div class="table-wrap">
+        <table class="data" id="reg-table">
+          <thead><tr>
+            <th><input type="checkbox" id="reg-all" aria-label="Pilih semua"></th>
+            <th>Regulasi</th><th>Kategori</th><th>Status</th><th>Relevansi</th><th>Pemenuhan</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted pad" id="reg-count"></p>
+    </div>
+  </section>
+
+  <!-- PEMENUHAN -->
+  <section id="tab-pemenuhan" class="tab">
+    <div class="toolbar">
+      <select id="obl-status">
+        <option value="">Semua status</option>
+        <option value="belum">Belum</option><option value="proses">Dalam proses</option>
+        <option value="terpenuhi">Terpenuhi</option><option value="tidak_berlaku">Tidak berlaku</option>
+      </select>
+      <span class="spacer"></span>
+      <a class="button secondary" id="export-link" href="/api/export.csv">Ekspor register (CSV)</a>
+    </div>
+    <div class="card flush">
+      <div class="table-wrap">
+        <table class="data" id="obl-table">
+          <thead><tr><th>Regulasi</th><th>Kewajiban</th><th>PIC</th><th>Tenggat</th><th>Status</th><th>Bukti / Catatan</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted pad" id="obl-count"></p>
+    </div>
+  </section>
+
+  <!-- SUMBER -->
+  <section id="tab-sumber" class="tab">
+    <div class="toolbar">
+      <p class="muted">Sinkronisasi menarik daftar peraturan dari situs JDIH sesuai kategori terpilih. Keputusan relevansi &amp; data pemenuhan tidak akan tertimpa.</p>
+      <span class="spacer"></span>
+      <button id="btn-sync-all">Sinkronkan semua sumber aktif</button>
+    </div>
+    <div id="sources" class="sources"></div>
+    <div class="card">
+      <h2>Riwayat sinkronisasi</h2>
+      <div class="table-wrap"><table class="data" id="sync-log"><thead><tr><th>Waktu</th><th>Sumber</th><th>Status</th><th>Pesan</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+</main>
+
+<!-- Detail drawer -->
+<aside id="drawer" class="drawer" hidden aria-modal="true" role="dialog">
+  <div class="drawer-panel">
+    <button class="close" id="drawer-close" aria-label="Tutup">×</button>
+    <div id="drawer-body"></div>
+  </div>
+</aside>
+
+<dialog id="dlg-add">
+  <form method="dialog" id="form-add" class="form">
+    <h2>Tambah regulasi</h2>
+    <label>Jenis <input name="jenis" required placeholder="mis. Permenaker"></label>
+    <div class="row">
+      <label>Nomor <input name="nomor" required></label>
+      <label>Tahun <input name="tahun" type="number" min="1900" max="2100" required></label>
+    </div>
+    <label>Tentang <textarea name="judul" required rows="2"></textarea></label>
+    <div class="row">
+      <label>Kategori <select name="category"></select></label>
+      <label>Status <select name="status_berlaku"><option>Berlaku</option><option>Diubah</option><option>Dicabut</option></select></label>
+    </div>
+    <label>URL sumber <input name="url" type="url"></label>
+    <div class="actions"><button value="cancel" class="secondary" formnovalidate>Batal</button><button value="ok">Simpan</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<div id="tooltip" class="tooltip" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
