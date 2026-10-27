@@ -137,3 +137,71 @@ def normalize_status(text):
 
 def citation(row):
     return f"{row['jenis']} No. {row['nomor']} Tahun {row['tahun']}"
+
+
+# Long names per short jenis, so "peraturan pemerintah 50" or "permenaker 5" find the right rows.
+JENIS_NAMES = {
+    "UU": "undang-undang undang undang uu",
+    "Perppu": "peraturan pemerintah pengganti undang-undang perppu",
+    "PP": "peraturan pemerintah pp",
+    "Perpres": "peraturan presiden perpres",
+    "Keppres": "keputusan presiden keppres",
+    "Inpres": "instruksi presiden inpres",
+    "Permenaker": "peraturan menteri ketenagakerjaan tenaga kerja transmigrasi permenaker permenakertrans permen",
+    "Kepmenaker": "keputusan menteri ketenagakerjaan tenaga kerja transmigrasi kepmenaker kepmenakertrans kepmen",
+    "Permen LHK": "peraturan menteri lingkungan hidup dan kehutanan permen lhk permenlhk",
+    "Permen LH": "peraturan menteri lingkungan hidup permen lh permenlh",
+    "Kepmen LH(K)": "keputusan menteri lingkungan hidup kehutanan kepmen lh lhk kepmenlh",
+    "Permenkes": "peraturan menteri kesehatan permenkes permen",
+    "Permen ESDM": "peraturan menteri energi sumber daya mineral permen esdm",
+    "Permen PUPR": "peraturan menteri pekerjaan umum perumahan rakyat permen pupr",
+    "Permenperin": "peraturan menteri perindustrian permenperin permen",
+    "Perda": "peraturan daerah perda",
+}
+# Words that only structure a citation ("PP Nomor 50 Tahun 2012 tentang ...").
+SEARCH_STOPWORDS = {"nomor", "no", "nmr", "tahun", "thn", "th", "tentang", "ttg", "tgl"}
+_TOKEN_RE = re.compile(r"[\w.]+", re.UNICODE)
+
+
+def search_tokens(query):
+    """Split a search query into tokens; '5/2018' and 'No.5' become ['5', '2018'] / ['5']."""
+    q = (query or "").lower().replace("/", " ").replace("-", " ")
+    tokens = []
+    for tok in _TOKEN_RE.findall(q):
+        tok = tok.strip(".")
+        if tok.startswith("no.") and tok[3:]:
+            tok = tok[3:]
+        if tok and tok not in SEARCH_STOPWORDS:
+            tokens.append(tok)
+    return tokens
+
+
+def search_score(row, tokens):
+    """None when the regulation does not match every token, else a rank (higher = closer match).
+
+    Number tokens match the regulation number or year exactly (so "5" does not find No. 15 or 50),
+    or a segment of composite numbers such as PER.04/MEN/1987. Other tokens match the type
+    (short or long name), the number or the title.
+    """
+    nomor = str(row["nomor"] or "").lower()
+    tahun = str(row["tahun"] or "")
+    nomor_parts = {p.lstrip("0") or "0" for p in re.split(r"[^0-9a-z]+", nomor) if p}
+    jenis = row["jenis"] or ""
+    text = " ".join([jenis.lower(), JENIS_NAMES.get(jenis, ""), nomor, (row["judul"] or "").lower()])
+    score = 0
+    for tok in tokens:
+        if tok.isdigit():
+            num = tok.lstrip("0") or "0"
+            if num == (nomor.lstrip("0") or "0"):
+                score += 3
+            elif tok == tahun:
+                score += 2
+            elif num in nomor_parts:
+                score += 1
+            else:
+                return None
+        elif (re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w])", text) if len(tok) <= 3 else tok in text):
+            score += 1  # short tokens ("pp", "uu", "k3") must be whole words
+        else:
+            return None
+    return score

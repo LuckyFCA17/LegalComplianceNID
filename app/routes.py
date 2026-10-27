@@ -10,7 +10,7 @@ from flask import Blueprint, Response, abort, current_app, jsonify, request, sen
 from .connectors.base import make_record
 from .connectors.jdihn import parse_feed
 from .db import get_db, now
-from .legal import CATEGORIES, citation
+from .legal import CATEGORIES, citation, search_score, search_tokens
 from .connectors import get_connector
 from .connectors.base import DEFAULT_KEYWORDS, ConnectorError
 from .sync import apply_suggestions, resolve_regulation, run_sync, upsert_regulation
@@ -202,10 +202,8 @@ def list_regulations():
     compliance = request.args.get("compliance", "")
     if compliance in COMPLIANCE or compliance == "terlambat":
         where.append("r.relevance = 'relevan'")  # compliance is only tracked for relevant regulations
-    q = request.args.get("q", "").strip()
-    if q:
-        where.append("(r.judul LIKE ? OR r.nomor LIKE ? OR r.jenis LIKE ? OR CAST(r.tahun AS TEXT) = ?)")
-        params.extend([f"%{q}%", f"%{q}%", f"%{q}%", q])
+    # Free-text search ("PP 50", "No. 5 Tahun 2018", "5/2018", "limbah") is matched per token below.
+    tokens = search_tokens(request.args.get("q", ""))
     rows = db.execute(
         f"""SELECT r.*, s.name AS source_name,
                COUNT(o.id) AS obl_total,
@@ -222,8 +220,13 @@ def list_regulations():
             ORDER BY CASE r.relevance WHEN 'relevan' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
                      r.category, r.tahun DESC, r.jenis""",
         [date.today().isoformat(), *params]).fetchall()
-    out = []
+    out, scores = [], {}
     for r in rows:
+        if tokens:
+            score = search_score(r, tokens)
+            if score is None:
+                continue
+            scores[r["id"]] = score
         status, pct = compliance_of(r)
         d = _reg_dict(r, {"compliance_status": status, "compliance_pct": pct, "obl_overdue": r["obl_overdue"] or 0})
         if compliance == "terlambat" and not d["obl_overdue"]:
@@ -234,6 +237,8 @@ def list_regulations():
     sort = REG_SORTS.get(request.args.get("sort", ""))
     if sort:
         out.sort(key=sort)  # stable: ties keep the default relevance/category order
+    elif scores:
+        out.sort(key=lambda d: -scores[d["id"]])  # exact number/year matches first
     return jsonify(out)
 
 

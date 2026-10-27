@@ -252,3 +252,36 @@ def test_filter_and_sort_by_assessment_and_compliance(client):
     assert years == sorted(years, reverse=True)
     titles = [r["judul"].lower() for r in client.get("/api/regulations?category=K3&sort=judul").get_json()]
     assert titles == sorted(titles)
+
+
+@pytest.mark.parametrize("q,expected", [
+    ("50", ["PP No. 50 Tahun 2012"]),
+    ("PP 50", ["PP No. 50 Tahun 2012"]),
+    ("nomor 50", ["PP No. 50 Tahun 2012"]),
+    ("PP No. 50 Tahun 2012", ["PP No. 50 Tahun 2012"]),
+    ("peraturan pemerintah nomor 50", ["PP No. 50 Tahun 2012"]),
+    ("5/2018", ["Permenaker No. 5 Tahun 2018"]),
+    ("No.5 Tahun 2018", ["Permenaker No. 5 Tahun 2018"]),
+    ("Permenaker 5 2018", ["Permenaker No. 5 Tahun 2018"]),
+    ("peraturan menteri ketenagakerjaan nomor 5 tahun 2018", ["Permenaker No. 5 Tahun 2018"]),
+    ("UU 1 1970", ["UU No. 1 Tahun 1970"]),
+    ("5", ["Permenaker No. 5 Tahun 2018", "Permen LH No. 5 Tahun 2014"]),  # not No. 15 / 50 / 51
+    ("permenaker 2018", ["Permenaker No. 5 Tahun 2018"]),
+    ("limbah domestik", ["Permen LHK No. 68 Tahun 2016"]),
+    ("PP 50 2099", []),
+])
+def test_search_by_number_type_year_and_title(client, q, expected):
+    rows = client.get("/api/regulations", query_string={
+        "category": "K3,Lingkungan,Ketenagakerjaan,Lainnya", "q": q}).get_json()
+    assert sorted(r["citation"] for r in rows) == sorted(expected)
+
+
+def test_search_matches_composite_numbers_and_ranks_exact_number_first(client):
+    client.post("/api/regulations", json={"jenis": "Permenaker", "nomor": "PER.07/MEN/1999", "tahun": 1999,
+                                          "judul": "Panitia Pembina K3"})
+    client.post("/api/regulations", json={"jenis": "PP", "nomor": "7", "tahun": 1999, "judul": "Uji urutan"})
+    for q in ("PER.07/MEN/1999", "per.07", "permenaker 07 1999"):
+        rows = client.get("/api/regulations", query_string={"category": "K3,Lainnya", "q": q}).get_json()
+        assert "Permenaker No. PER.07/MEN/1999 Tahun 1999" in [r["citation"] for r in rows], q
+    rows = client.get("/api/regulations", query_string={"category": "K3,Lainnya", "q": "7 1999"}).get_json()
+    assert [r["citation"] for r in rows] == ["PP No. 7 Tahun 1999", "Permenaker No. PER.07/MEN/1999 Tahun 1999"]
