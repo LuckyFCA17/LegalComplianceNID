@@ -23,9 +23,17 @@ DEFAULT_HEADERS = {
 }
 
 # Search keywords per category used when a connector has no explicit keyword list.
+# Results are still classified by title (legal.classify), so a broad search term such as
+# "pengusaha" only helps find regulations; it does not by itself put them in K3.
 DEFAULT_KEYWORDS = {
-    "K3": ["keselamatan dan kesehatan kerja", "keselamatan kerja", "kebakaran"],
-    "Lingkungan": ["lingkungan hidup", "limbah", "baku mutu"],
+    "K3": [
+        "keselamatan dan kesehatan kerja", "keselamatan kerja", "kesehatan kerja", "SMK3",
+        "sistem manajemen K3", "penyakit akibat kerja", "kecelakaan kerja", "P3K", "P2K3",
+        "tempat kerja", "pengusaha", "kebakaran",
+    ],
+    "Lingkungan": [
+        "lingkungan hidup", "limbah", "baku mutu", "pencemaran", "sampah", "UKL", "UPL", "AMDAL", "emisi",
+    ],
     "Ketenagakerjaan": ["ketenagakerjaan", "pengupahan", "jaminan sosial"],
 }
 
@@ -84,7 +92,8 @@ class Connector:
         out = []
         for c in cats:
             out.extend(DEFAULT_KEYWORDS.get(c, []))
-        return out
+        # The same term may serve several categories; search it once.
+        return list({kw.lower(): kw for kw in out}.values())
 
     def get(self, url, **kw):
         wait = self._last + self.delay - time.monotonic()

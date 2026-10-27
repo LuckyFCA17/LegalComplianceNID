@@ -222,10 +222,16 @@ class HtmlSearchConnector(Connector):
             yield from self._pages(None)
             return
         found = False
+        failed_in_a_row = 0
         for kw in self.keywords(categories):
+            errors_before = len(self.errors)
             for rec in self._pages(kw):
                 found = True
                 yield rec
+            failed_in_a_row = failed_in_a_row + 1 if len(self.errors) > errors_before else 0
+            if failed_in_a_row >= 3:
+                self.errors.append("Pencarian dihentikan setelah 3 kata kunci berturut-turut gagal")
+                break
         if not found and not self.errors:
             self.errors.append(f"Pencarian di {self.search_url('…', 1)} tidak mengembalikan peraturan yang dikenali "
                                "— tampilan situs mungkin berubah; gunakan tombol Tes koneksi")

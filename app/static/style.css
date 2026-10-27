@@ -232,3 +232,9 @@ a.link { color: var(--accent); }
 .cstatus.good::first-letter { color: var(--good); }
 .cstatus.warn::first-letter { color: var(--warning); }
 .cstatus.crit { color: var(--critical); }
+
+.keywords .kw-row { margin-bottom: 8px; line-height: 2; }
+.keywords .kw-row b { display: inline-block; min-width: 130px; }
+.kw { display: inline-block; font-size: 12px; padding: 1px 8px; margin: 0 4px 2px 0; border-radius: 999px;
+  background: var(--surface-2); color: var(--ink-2); line-height: 1.6; }
+.keywords code { font-size: 12px; }

@@ -457,7 +457,10 @@ $("#obl-table").addEventListener("change", async (e) => {
 
 /* ---------------------------------------------------------------- sources */
 async function loadSources() {
-  const [sources, log] = await Promise.all([api("/api/sources"), api("/api/sync/log")]);
+  const [sources, log, meta] = await Promise.all([api("/api/sources"), api("/api/sync/log"), api("/api/meta")]);
+  $("#kw-list").innerHTML = state.cats.filter((c) => meta.search_keywords[c]).map((c) =>
+    `<div class="kw-row"><b>${c}</b> ${meta.search_keywords[c].map((k) => `<span class="kw">${esc(k)}</span>`).join("")}</div>`)
+    .join("") || `<p class="muted">Kategori terpilih tidak memiliki kata kunci pencarian.</p>`;
   $("#sources").innerHTML = sources.filter((s) => !["manual", "import"].includes(s.kind)).map((s) => `
     <div class="card source" data-src="${s.id}">
       <div class="head"><h2>${esc(s.name)}</h2>

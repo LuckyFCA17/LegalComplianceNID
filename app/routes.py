@@ -12,7 +12,7 @@ from .connectors.jdihn import parse_feed
 from .db import get_db, now
 from .legal import CATEGORIES, citation
 from .connectors import get_connector
-from .connectors.base import ConnectorError
+from .connectors.base import DEFAULT_KEYWORDS, ConnectorError
 from .sync import apply_suggestions, resolve_regulation, run_sync, upsert_regulation
 
 bp = Blueprint("api", __name__)
@@ -94,7 +94,7 @@ def index():
 @bp.get("/api/meta")
 def meta():
     return jsonify(categories=CATEGORIES, relevance=RELEVANCE, obligation_status=OBL_STATUS,
-                   regulation_status=REG_STATUS)
+                   regulation_status=REG_STATUS, search_keywords=DEFAULT_KEYWORDS)
 
 
 # ---------------------------------------------------------------- sources & sync

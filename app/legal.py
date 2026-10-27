@@ -14,7 +14,8 @@ CATEGORY_KEYWORDS = {
         "bahan kimia berbahaya", "pertolongan pertama pada kecelakaan", "p3k",
         "penyakit akibat kerja", "kecelakaan kerja", "ahli k3", "dokter perusahaan",
         "pengawasan ketenagakerjaan", "konstruksi bangunan", "perancah", "scaffolding",
-        "ruang terbatas", "ketinggian", "radiasi",
+        "ruang terbatas", "ketinggian", "radiasi", "sistem manajemen k3", "p2k3", "tempat kerja",
+        "panitia pembina keselamatan",
     ],
     "Lingkungan": [
         "lingkungan hidup", "amdal", "ukl-upl", "upaya pengelolaan lingkungan",
@@ -22,7 +23,8 @@ CATEGORY_KEYWORDS = {
         "baku mutu", "air limbah", "emisi", "udara ambien", "pencemaran", "kerusakan lingkungan",
         "sampah", "kebisingan", "getaran", "kebauan", "air permukaan", "gas rumah kaca",
         "proper", "pengendalian pencemaran", "perlindungan dan pengelolaan lingkungan",
-        "konservasi", "kehutanan", "sumber daya air", "ozon",
+        "konservasi", "kehutanan", "sumber daya air", "ozon", "ukl", "upl",
+        "upaya pemantauan lingkungan", "analisis mengenai dampak lingkungan",
     ],
     "Ketenagakerjaan": [
         "ketenagakerjaan", "tenaga kerja", "pekerja", "buruh", "upah", "pengupahan",

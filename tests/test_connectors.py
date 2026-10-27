@@ -315,3 +315,32 @@ def test_source_connection_test_endpoint(app, fake_http):
     fake_http.pages = {BPK: (403, "blocked")}
     t = c.post(f"/api/sources/{sid}/test", json={"keyword": "k3"}).get_json()
     assert not t["ok"] and "HTTP 403" in t["error"]
+
+
+def test_category_search_keywords():
+    from app.connectors.base import Connector
+    from app.legal import classify
+    k3 = Connector().keywords(["K3"])
+    for kw in ("keselamatan kerja", "SMK3", "sistem manajemen K3", "kesehatan kerja", "penyakit akibat kerja",
+               "kecelakaan kerja", "P3K", "pengusaha", "P2K3", "tempat kerja"):
+        assert kw in k3
+    env = Connector().keywords(["Lingkungan"])
+    for kw in ("pencemaran", "sampah", "UKL", "UPL", "AMDAL", "emisi"):
+        assert kw in env
+    both = Connector().keywords(["K3", "Lingkungan"])
+    assert len(both) == len({k.lower() for k in both})  # no term searched twice
+    assert Connector(config={"keywords": ["x"]}).keywords(["K3"]) == ["x"]  # per-source override wins
+
+    assert classify("Pembentukan P2K3 di Perusahaan") == "K3"
+    assert classify("Penerapan Sistem Manajemen K3 Konstruksi") == "K3"
+    assert classify("Fasilitas Kesejahteraan Pekerja di Tempat Kerja") == "K3"
+    assert classify("Pedoman Penyusunan UKL dan UPL") == "Lingkungan"
+    assert classify("Kewajiban Pengusaha Membayar Upah") == "Ketenagakerjaan"  # search term only, not a K3 signal
+
+
+def test_sync_searches_each_new_keyword(fake_http):
+    fake_http.pages = {BPK + "/Search": (200, "<p>Tidak ada hasil</p>")}
+    c = BpkConnector(BPK, {"max_pages": 1, "delay": 0})
+    list(c.fetch(["Lingkungan"]))
+    searched = [u.split("keywords=")[1].split("&")[0] for u in fake_http.calls if "keywords=" in u]
+    assert searched == ["lingkungan+hidup", "limbah", "baku+mutu", "pencemaran", "sampah", "UKL", "UPL", "AMDAL", "emisi"]

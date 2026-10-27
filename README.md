@@ -109,6 +109,17 @@ Jika teks hasil pencarian sulit dibaca, jenis/nomor/tahun diambil dari slug alam
 (mis. `.../permenkes-no-11-tahun-2022`). Sertifikat SSL situs .go.id yang tidak lengkap ditangani otomatis
 (`ssl_fallback`, dicatat di riwayat sinkronisasi).
 
+Kata kunci pencarian bawaan (tampil juga di tab *Sumber Data*):
+
+| Kategori | Kata kunci |
+|---|---|
+| K3 | keselamatan dan kesehatan kerja, keselamatan kerja, kesehatan kerja, SMK3, sistem manajemen K3, penyakit akibat kerja, kecelakaan kerja, P3K, P2K3, tempat kerja, pengusaha, kebakaran |
+| Lingkungan | lingkungan hidup, limbah, baku mutu, pencemaran, sampah, UKL, UPL, AMDAL, emisi |
+| Ketenagakerjaan | ketenagakerjaan, pengupahan, jaminan sosial |
+
+Kategori setiap hasil tetap ditentukan dari judulnya, sehingga kata kunci umum seperti "pengusaha"
+membantu menemukan peraturan tanpa otomatis memasukkannya ke K3.
+
 Peraturan yang sudah dicek tidak dicek ulang selama 30 hari. Dari panel detail sebuah peraturan, editor juga bisa
 menekan **Cari halaman & PDF di JDIH**, atau mengisi tautan halaman/PDF secara manual.
 
