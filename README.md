@@ -19,6 +19,21 @@ peraturan perundang-undangan Indonesia (JDIH BPK RI, JDIH Kemnaker, dan feed JDI
 
 Tingkat pemenuhan = kewajiban *Terpenuhi* ÷ (total kewajiban − *Tidak berlaku*).
 
+## Pencarian regulasi
+Kotak pencarian di tab *Regulasi* memecah teks per kata:
+
+| Bagian yang diketik | Aturan |
+|---|---|
+| Jenis (`PP`, `Permenaker`, `peraturan menteri tenaga kerja dan transmigrasi`, `UU` …) | hasil dibatasi ke jenis itu; singkatan dan nama panjang setara |
+| Nomor gabungan (`PER.02/MEN/1980`, `KEP.186/MEN/1999`) | harus sama dengan nomor regulasi; atau angka pertama + tahunnya sama (`No. 2 Tahun 1980`) |
+| Angka (`2`, `1980`) | harus sama persis dengan nomor atau tahun — `5` tidak menemukan No. 15/50 |
+| Kata lain (`pemeriksaan kesehatan`) | dicari di judul & nomor; minimal 60% kata harus ditemukan |
+| `nomor`, `no.`, `tahun`, `tentang`, `dan`, `di`, `dalam` … | diabaikan |
+
+Hasil diurutkan dari yang paling cocok: nomor persis, lalu tahun, lalu jumlah kata dan frasa judul yang sama.
+Contoh yang setara: `Permenaker No. 2 Tahun 1980`, `permenaker 2/1980`, `PER.02/MEN/1980`,
+`Peraturan Menteri Tenaga Kerja dan Transmigrasi Nomor PER.02/MEN/1980`.
+
 ## Menjalankan
 ```bash
 python3 -m venv .venv && . .venv/bin/activate

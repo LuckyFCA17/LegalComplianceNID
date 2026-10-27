@@ -285,3 +285,36 @@ def test_search_matches_composite_numbers_and_ranks_exact_number_first(client):
         assert "Permenaker No. PER.07/MEN/1999 Tahun 1999" in [r["citation"] for r in rows], q
     rows = client.get("/api/regulations", query_string={"category": "K3,Lainnya", "q": "7 1999"}).get_json()
     assert [r["citation"] for r in rows] == ["PP No. 7 Tahun 1999", "Permenaker No. PER.07/MEN/1999 Tahun 1999"]
+
+
+@pytest.mark.parametrize("q", [
+    "Permenaker No. 2 Tahun 1980", "Permenaker No.2 Tahun 1980", "permenaker no 2 thn 1980", "Permenaker 2/1980",
+    "Permenaker No 2", "Peraturan Menteri Tenaga Kerja No. 2 Tahun 1980", "Permenakertrans 2 1980",
+    "pemeriksaan kesehatan tenaga kerja", "Kesehatan Tenaga Kerja 1980", "Per 02 men 1980", "PER.02/MEN/1980",
+    "PER-02/MEN/1980", "Peraturan Menteri Tenaga Kerja dan Transmigrasi Nomor PER.02/MEN/1980",
+])
+def test_search_sample_permenaker_2_1980(client, q):
+    # Same regulation stored twice, as the catalogue (No. 2) and as a JDIH sync would (PER.02/MEN/1980).
+    client.post("/api/regulations", json={"jenis": "Peraturan Menteri Tenaga Kerja dan Transmigrasi",
+                                          "nomor": "PER.02/MEN/1980", "tahun": 1980,
+                                          "judul": "Pemeriksaan Kesehatan Tenaga Kerja dalam Penyelenggaraan Keselamatan Kerja"})
+    client.post("/api/regulations", json={"jenis": "Permenaker", "nomor": "PER.04/MEN/1980", "tahun": 1980,
+                                          "judul": "Syarat-syarat Pemasangan dan Pemeliharaan APAR"})
+    rows = client.get("/api/regulations", query_string={"category": "K3,Lainnya", "q": q}).get_json()
+    assert sorted(r["citation"] for r in rows) == [
+        "Permenaker No. 2 Tahun 1980", "Permenaker No. PER.02/MEN/1980 Tahun 1980"], q
+    if "/" in q and "." in q.split()[-1]:
+        assert rows[0]["citation"] == "Permenaker No. PER.02/MEN/1980 Tahun 1980"  # exact composite first
+
+
+def test_search_words_need_most_matches_and_phrase_ranks_first(client):
+    rows = client.get("/api/regulations", query_string={"category": "K3", "q": "kesehatan kerja"}).get_json()
+    assert rows[0]["citation"] == "PP No. 88 Tahun 2019"  # title is exactly the phrase
+    rows = client.get("/api/regulations", query_string={"category": "K3", "q": "keselamatan kerja listrik"}).get_json()
+    assert rows[0]["citation"] == "Permenaker No. 12 Tahun 2015"
+    # An extra joining word ("dan") or one unknown word does not hide the regulation.
+    rows = client.get("/api/regulations", query_string={"category": "K3", "q": "listrik dan tempat kerja xyz"}).get_json()
+    assert rows[0]["citation"] == "Permenaker No. 12 Tahun 2015"
+    # A type named in the search restricts the results to that type.
+    rows = client.get("/api/regulations", query_string={"category": "K3", "q": "PP kesehatan kerja"}).get_json()
+    assert {r["jenis"] for r in rows} == {"PP"}

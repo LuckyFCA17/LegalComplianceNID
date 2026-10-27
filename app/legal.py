@@ -158,50 +158,161 @@ JENIS_NAMES = {
     "Permenperin": "peraturan menteri perindustrian permenperin permen",
     "Perda": "peraturan daerah perda",
 }
-# Words that only structure a citation ("PP Nomor 50 Tahun 2012 tentang ...").
-SEARCH_STOPWORDS = {"nomor", "no", "nmr", "tahun", "thn", "th", "tentang", "ttg", "tgl"}
+# Words that only structure a citation ("PP Nomor 50 Tahun 2012 tentang ...") or join words in a title.
+SEARCH_STOPWORDS = {
+    "nomor", "no", "nmr", "tahun", "thn", "th", "tentang", "ttg", "tgl",
+    "dan", "di", "ke", "dari", "atau", "yang", "dalam", "pada", "serta", "bagi", "untuk", "oleh", "atas", "the",
+    # fragments of old ministry numbers typed apart: "PER 02 MEN 1980", "KEP 186 MEN 1999"
+    "per", "kep", "men", "menlhk", "setjen", "kum",
+}
 _TOKEN_RE = re.compile(r"[\w.]+", re.UNICODE)
+# Generic hints ("peraturan menteri ...") match every ministry regulation of that form.
+_JENIS_FAMILY = {"Permen": "Permen", "Kepmen": "Kepmen"}
 
 
-def search_tokens(query):
-    """Split a search query into tokens; '5/2018' and 'No.5' become ['5', '2018'] / ['5']."""
-    q = (query or "").lower().replace("/", " ").replace("-", " ")
-    tokens = []
+def _tokens(text):
+    q = (text or "").lower().replace("/", " ").replace("-", " ")
+    out = []
     for tok in _TOKEN_RE.findall(q):
         tok = tok.strip(".")
         if tok.startswith("no.") and tok[3:]:
-            tok = tok[3:]
+            tok = tok[3:]  # "No.5" -> "5"
         if tok and tok not in SEARCH_STOPWORDS:
-            tokens.append(tok)
-    return tokens
+            out.append(tok)
+    return out
 
 
-def search_score(row, tokens):
-    """None when the regulation does not match every token, else a rank (higher = closer match).
+# Composite regulation numbers: PER.02/MEN/1980, KEP.186/MEN/1999, P.68/MENLHK/SETJEN/KUM.1/8/2016.
+_COMPOSITE_RE = re.compile(r"(?<![\w.])[a-z]{0,6}[.\-]?\d+(?:/[a-z0-9.\-]+)+")
 
-    Number tokens match the regulation number or year exactly (so "5" does not find No. 15 or 50),
-    or a segment of composite numbers such as PER.04/MEN/1987. Other tokens match the type
-    (short or long name), the number or the title.
+
+def _norm_number(text):
+    """'PER.02/MEN/1980' -> 'per2men1980' so spelling variants (PER-02, Per.2) compare equal."""
+    return re.sub(r"(?<![0-9])0+(?=[0-9])", "", re.sub(r"[^0-9a-z]", "", (text or "").lower()))
+
+
+def parse_search(query):
+    """Split a search into the type it names, composite numbers, plain numbers and words.
+
+    "Permenaker No. 2 Tahun 1980"
+        -> jenis "Permenaker", numbers ["2", "1980"]
+    "Peraturan Menteri Tenaga Kerja dan Transmigrasi Nomor PER.02/MEN/1980"
+        -> jenis "Permenaker", composites ["per.02/men/1980"]
+    "pemeriksaan kesehatan tenaga kerja"
+        -> words ["pemeriksaan", "kesehatan", "tenaga", "kerja"]
     """
-    nomor = str(row["nomor"] or "").lower()
-    tahun = str(row["tahun"] or "")
-    nomor_parts = {p.lstrip("0") or "0" for p in re.split(r"[^0-9a-z]+", nomor) if p}
+    text = " ".join((query or "").lower().split())
+    jenis = None
+    for pattern, short in JENIS_PATTERNS:
+        m = re.search(pattern, text)
+        if m:
+            jenis = short
+            text = (text[:m.start()] + " " + text[m.end():]).strip()  # the type's words need no title match
+            break
+    composites = _COMPOSITE_RE.findall(text)
+    text = _COMPOSITE_RE.sub(" ", text)
+    tokens = _tokens(text)
+    numbers = [t for t in tokens if t.isdigit()]
+    words = [t for t in tokens if not t.isdigit()]
+    # "per.02" or "no5"-like codes typed without slashes behave as numbers too.
+    codes = [w for w in words if re.search(r"\d", w)]
+    return {
+        "jenis": jenis,
+        "composites": composites,
+        "numbers": numbers,
+        "codes": codes,
+        "words": [w for w in words if w not in codes],
+    }
+
+
+def search_tokens(query):
+    """Flat token list (kept for callers that only need the words of a query)."""
+    return _tokens(query)
+
+
+def _word_in(tok, text):
+    if len(tok) <= 3:  # short tokens ("pp", "k3", "men") must be whole words
+        return re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w])", text) is not None
+    return tok in text
+
+
+def search_score(row, search):
+    """Rank of a regulation for a parsed search (parse_search), or None when it does not match.
+
+    Per-word scheme:
+      * a type named in the search (UU, PP, Permenaker, ...) must match the regulation's type;
+      * a composite number (PER.02/MEN/1980) must equal the regulation number (+4), or its first
+        number must equal the regulation number and its year the regulation year (+2);
+      * every plain number must match: the regulation number exactly (+3), the year (+2), a segment
+        of a composite number (+1) or a number written in the title (+0.5);
+      * codes such as "per.02" must be part of the regulation number (+2) or equal its number (+1);
+      * other words are looked up in the title and number (+1 each, +1 more if all are found,
+        +2 more if they appear as one phrase in the title, +2 more if they are the whole title);
+        at least 60% of them must be found.
+    """
+    if isinstance(search, (list, tuple)):  # tolerate a flat token list
+        search = parse_search(" ".join(search))
     jenis = row["jenis"] or ""
-    text = " ".join([jenis.lower(), JENIS_NAMES.get(jenis, ""), nomor, (row["judul"] or "").lower()])
-    score = 0
-    for tok in tokens:
-        if tok.isdigit():
-            num = tok.lstrip("0") or "0"
-            if num == (nomor.lstrip("0") or "0"):
-                score += 3
-            elif tok == tahun:
-                score += 2
-            elif num in nomor_parts:
-                score += 1
-            else:
-                return None
-        elif (re.search(rf"(?<![\w.]){re.escape(tok)}(?![\w])", text) if len(tok) <= 3 else tok in text):
-            score += 1  # short tokens ("pp", "uu", "k3") must be whole words
+    if search.get("jenis"):
+        family = _JENIS_FAMILY.get(search["jenis"])
+        if not (jenis == search["jenis"] or (family and jenis.startswith(family))):
+            return None
+    nomor = str(row["nomor"] or "").lower()
+    nomor_norm = _norm_number(nomor)
+    nomor_plain = nomor.lstrip("0") or "0"
+    tahun = str(row["tahun"] or "")
+    judul = (row["judul"] or "").lower()
+    nomor_parts = {p.lstrip("0") or "0" for p in re.split(r"[^0-9a-z]+", nomor) if p}
+    score = 1.0 if search.get("jenis") else 0.0
+
+    for comp in search.get("composites", []):
+        if _norm_number(comp) == nomor_norm:
+            score += 4
+            continue
+        # "2/1980" vs No. 2 Tahun 1980 or PER.02/MEN/1980: same first number and same year.
+        digits = re.findall(r"\d+", comp)
+        first = (digits[0].lstrip("0") or "0") if digits else None
+        years = [d for d in digits[1:] if len(d) == 4]
+        row_first = re.findall(r"\d+", nomor)
+        row_first = (row_first[0].lstrip("0") or "0") if row_first else None
+        if first and first == row_first and (not years or years[-1] == tahun):
+            score += 2
         else:
             return None
+
+    for tok in search.get("numbers", []):
+        num = tok.lstrip("0") or "0"
+        if num == nomor_plain:
+            score += 3
+        elif tok == tahun:
+            score += 2
+        elif num in nomor_parts:
+            score += 1
+        elif re.search(rf"(?<!\d){re.escape(tok)}(?!\d)", judul):
+            score += 0.5
+        else:
+            return None
+
+    for code in search.get("codes", []):
+        code_norm = _norm_number(code)
+        digits = re.findall(r"\d+", code)
+        if code_norm and code_norm in nomor_norm:
+            score += 2
+        elif digits and (digits[0].lstrip("0") or "0") in nomor_parts:
+            score += 1
+        else:
+            return None
+
+    words = search.get("words", [])
+    if words:
+        text = " ".join([jenis.lower(), nomor, judul])
+        found = sum(1 for w in words if _word_in(w, text))
+        if found < max(1, -(-len(words) * 3 // 5)):  # at least 60% of the words, rounded up
+            return None
+        score += found + (1 if found == len(words) else 0)
+        phrase = " ".join(words)
+        if len(words) > 1 and phrase in judul:
+            score += 2  # the words appear together as a phrase in the title
+        if phrase == re.sub(r"\s+", " ", judul).strip():
+            score += 2  # the title is exactly what was searched
     return score
