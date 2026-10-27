@@ -20,6 +20,34 @@ bp = Blueprint("api", __name__)
 RELEVANCE = ["pending", "relevan", "tidak_relevan"]
 OBL_STATUS = ["belum", "proses", "terpenuhi", "tidak_berlaku"]
 REG_STATUS = ["Berlaku", "Diubah", "Dicabut"]
+# Compliance status of a relevant regulation, derived from its obligations.
+COMPLIANCE = ["terpenuhi", "proses", "belum", "tanpa_kewajiban", "tidak_berlaku"]
+REG_SORTS = {
+    "tahun_desc": lambda r: (-(r["tahun"] or 0),),
+    "tahun_asc": lambda r: (r["tahun"] or 9999,),
+    # Regulations without a compliance figure (not relevant / no obligations) go last either way.
+    "pemenuhan_asc": lambda r: (r["compliance_pct"] is None, r["compliance_pct"] or 0),
+    "pemenuhan_desc": lambda r: (r["compliance_pct"] is None, -(r["compliance_pct"] or 0)),
+    "judul": lambda r: (r["judul"].lower(),),
+}
+
+
+def compliance_of(row):
+    """(status, pct) of a regulation from its obligation counts; (None, None) when not relevant."""
+    if row["relevance"] != "relevan":
+        return None, None
+    total, done = row["obl_total"] or 0, row["obl_done"] or 0
+    applicable = total - (row["obl_na"] or 0)
+    if total == 0:
+        return "tanpa_kewajiban", None
+    if applicable == 0:
+        return "tidak_berlaku", None
+    pct = round(100 * done / applicable, 1)
+    if done == applicable:
+        return "terpenuhi", pct
+    if done or row["obl_proses"]:
+        return "proses", pct
+    return "belum", pct
 
 
 def _categories_arg():
@@ -171,6 +199,9 @@ def list_regulations():
         if val in allowed:
             where.append(f"{col} = ?")
             params.append(val)
+    compliance = request.args.get("compliance", "")
+    if compliance in COMPLIANCE or compliance == "terlambat":
+        where.append("r.relevance = 'relevan'")  # compliance is only tracked for relevant regulations
     q = request.args.get("q", "").strip()
     if q:
         where.append("(r.judul LIKE ? OR r.nomor LIKE ? OR r.jenis LIKE ? OR CAST(r.tahun AS TEXT) = ?)")
@@ -179,7 +210,10 @@ def list_regulations():
         f"""SELECT r.*, s.name AS source_name,
                COUNT(o.id) AS obl_total,
                SUM(o.status = 'terpenuhi') AS obl_done,
-               SUM(o.status = 'tidak_berlaku') AS obl_na
+               SUM(o.status = 'tidak_berlaku') AS obl_na,
+               SUM(o.status = 'proses') AS obl_proses,
+               SUM(o.due_date IS NOT NULL AND o.due_date != '' AND o.due_date < ?
+                   AND o.status IN ('belum', 'proses')) AS obl_overdue
             FROM regulations r
             LEFT JOIN sources s ON s.id = r.source_id
             LEFT JOIN obligations o ON o.regulation_id = r.id
@@ -187,8 +221,20 @@ def list_regulations():
             GROUP BY r.id
             ORDER BY CASE r.relevance WHEN 'relevan' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
                      r.category, r.tahun DESC, r.jenis""",
-        params).fetchall()
-    return jsonify([_reg_dict(r) for r in rows])
+        [date.today().isoformat(), *params]).fetchall()
+    out = []
+    for r in rows:
+        status, pct = compliance_of(r)
+        d = _reg_dict(r, {"compliance_status": status, "compliance_pct": pct, "obl_overdue": r["obl_overdue"] or 0})
+        if compliance == "terlambat" and not d["obl_overdue"]:
+            continue
+        if compliance in COMPLIANCE and status != compliance:
+            continue
+        out.append(d)
+    sort = REG_SORTS.get(request.args.get("sort", ""))
+    if sort:
+        out.sort(key=sort)  # stable: ties keep the default relevance/category order
+    return jsonify(out)
 
 
 def _get_reg(rid):

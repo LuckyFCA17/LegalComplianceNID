@@ -66,16 +66,33 @@
   <section id="tab-regulasi" class="tab">
     <div class="toolbar">
       <input type="search" id="reg-q" placeholder="Cari judul / nomor / tahun…">
-      <select id="reg-relevance">
-        <option value="">Semua relevansi</option>
+      <select id="reg-relevance" aria-label="Status penilaian">
+        <option value="">Penilaian: semua</option>
         <option value="pending">Belum dinilai</option>
         <option value="relevan">Relevan</option>
         <option value="tidak_relevan">Tidak relevan</option>
       </select>
-      <select id="reg-status">
-        <option value="">Semua status</option>
+      <select id="reg-compliance" aria-label="Status pemenuhan">
+        <option value="">Pemenuhan: semua</option>
+        <option value="terpenuhi">✓ Terpenuhi semua</option>
+        <option value="proses">↻ Dalam proses</option>
+        <option value="belum">✕ Belum dimulai</option>
+        <option value="terlambat">⚠ Ada yang lewat tenggat</option>
+        <option value="tanpa_kewajiban">Relevan tanpa kewajiban</option>
+      </select>
+      <select id="reg-status" aria-label="Status berlaku">
+        <option value="">Status berlaku: semua</option>
         <option>Berlaku</option><option>Diubah</option><option>Dicabut</option>
       </select>
+      <select id="reg-sort" aria-label="Urutkan">
+        <option value="">Urutkan: relevansi</option>
+        <option value="tahun_desc">Tahun terbaru</option>
+        <option value="tahun_asc">Tahun terlama</option>
+        <option value="pemenuhan_asc">Pemenuhan terendah</option>
+        <option value="pemenuhan_desc">Pemenuhan tertinggi</option>
+        <option value="judul">Judul A–Z</option>
+      </select>
+      <button class="link" id="reg-reset" hidden>Reset filter</button>
       <span class="spacer"></span>
       <button id="btn-add-reg" class="secondary editor-only">+ Tambah manual</button>
       <label class="secondary button editor-only">Impor CSV/JSON<input type="file" id="import-file" accept=".csv,.json" hidden></label>

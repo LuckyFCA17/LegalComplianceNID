@@ -212,3 +212,43 @@ def test_import_csv_and_export(client):
 def test_spa_served(client):
     assert b"Legal Compliance" in client.get("/").data
     assert json.loads(client.get("/api/meta").data)["categories"][0] == "K3"
+
+
+def test_filter_and_sort_by_assessment_and_compliance(client):
+    regs = client.get("/api/regulations?category=K3").get_json()
+    by = {r["citation"]: r["id"] for r in regs}
+    done, partial, notyet, empty = (by["UU No. 1 Tahun 1970"], by["Permenaker No. 5 Tahun 2018"],
+                                    by["Permenaker No. 8 Tahun 2020"], by["PP No. 88 Tahun 2019"])
+    for rid in (done, partial, notyet, empty):
+        client.patch(f"/api/regulations/{rid}", json={"relevance": "relevan"})
+    client.patch(f"/api/regulations/{by['Permenaker No. 6 Tahun 2017']}", json={"relevance": "tidak_relevan"})
+    for o in client.get(f"/api/regulations/{empty}").get_json()["obligations"]:
+        client.delete(f"/api/obligations/{o['id']}")
+    for o in client.get(f"/api/regulations/{done}").get_json()["obligations"]:
+        client.patch(f"/api/obligations/{o['id']}", json={"status": "terpenuhi"})
+    first = client.get(f"/api/regulations/{partial}").get_json()["obligations"][0]
+    client.patch(f"/api/obligations/{first['id']}", json={"status": "proses", "due_date": "2000-01-01"})
+
+    def ids(qs):
+        return {r["id"] for r in client.get("/api/regulations?category=K3&" + qs).get_json()}
+
+    assert ids("relevance=relevan") == {done, partial, notyet, empty}
+    assert ids("relevance=tidak_relevan") == {by["Permenaker No. 6 Tahun 2017"]}
+    assert len(ids("relevance=pending")) == len(regs) - 5
+    assert ids("compliance=terpenuhi") == {done}
+    assert ids("compliance=proses") == {partial}
+    assert ids("compliance=belum") == {notyet}
+    assert ids("compliance=tanpa_kewajiban") == {empty}
+    assert ids("compliance=terlambat") == {partial}
+    assert ids("compliance=terpenuhi&relevance=pending") == set()
+
+    rows = client.get("/api/regulations?category=K3&sort=pemenuhan_desc").get_json()
+    assert [r["compliance_pct"] for r in rows[:3]] == [100.0, 0.0, 0.0]
+    assert rows[0]["id"] == done and {rows[1]["id"], rows[2]["id"]} == {partial, notyet}
+    assert all(r["compliance_pct"] is None for r in rows[3:])  # unscored regulations last
+    asc = client.get("/api/regulations?category=K3&sort=pemenuhan_asc").get_json()
+    assert [r["compliance_pct"] for r in asc[:3]] == [0.0, 0.0, 100.0]
+    years = [r["tahun"] for r in client.get("/api/regulations?category=K3&sort=tahun_desc").get_json()]
+    assert years == sorted(years, reverse=True)
+    titles = [r["judul"].lower() for r in client.get("/api/regulations?category=K3&sort=judul").get_json()]
+    assert titles == sorted(titles)

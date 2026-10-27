@@ -226,3 +226,9 @@ a.link { color: var(--accent); }
 .checks .ok::first-letter { color: var(--good); }
 .checks .bad { color: var(--critical); }
 .checks .note { color: var(--ink-2); }
+
+/* compliance status in the regulation list */
+.cstatus { display: inline-block; font-size: 11px; margin-top: 4px; margin-right: 6px; white-space: nowrap; color: var(--ink-2); }
+.cstatus.good::first-letter { color: var(--good); }
+.cstatus.warn::first-letter { color: var(--warning); }
+.cstatus.crit { color: var(--critical); }

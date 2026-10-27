@@ -187,13 +187,39 @@ document.addEventListener("click", (e) => {
 });
 
 /* ---------------------------------------------------------------- regulations */
+const REG_FILTERS = { q: "#reg-q", relevance: "#reg-relevance", compliance: "#reg-compliance",
+  status: "#reg-status", sort: "#reg-sort" };
+const COMPLIANCE = {
+  terpenuhi: { label: "Terpenuhi", icon: "✓", cls: "good" },
+  proses: { label: "Dalam proses", icon: "↻", cls: "warn" },
+  belum: { label: "Belum dimulai", icon: "✕", cls: "crit" },
+  tanpa_kewajiban: { label: "Belum ada kewajiban", icon: "–", cls: "na" },
+  tidak_berlaku: { label: "Tidak berlaku", icon: "–", cls: "na" },
+};
+// Restore the last filters (per viewer, best effort).
+try {
+  const saved = JSON.parse(localStorage.getItem("lcn.regFilters") || "{}");
+  Object.entries(REG_FILTERS).forEach(([k, sel]) => { if (saved[k] != null) $(sel).value = saved[k]; });
+} catch (_) { /* storage unavailable */ }
+
 let regTimer;
-["#reg-q", "#reg-relevance", "#reg-status"].forEach((s) =>
-  $(s).addEventListener("input", () => { clearTimeout(regTimer); regTimer = setTimeout(loadRegs, 200); }));
+function scheduleRegs() { clearTimeout(regTimer); regTimer = setTimeout(loadRegs, 200); }
+// Some mobile browsers only fire "change" (not "input") on <select>, so listen to both.
+Object.values(REG_FILTERS).forEach((sel) => ["input", "change"].forEach((ev) => $(sel).addEventListener(ev, scheduleRegs)));
+$("#reg-reset").addEventListener("click", () => {
+  Object.values(REG_FILTERS).forEach((sel) => { $(sel).value = ""; });
+  loadRegs();
+});
 
 function relCtl(r) {
   return `<span class="seg-ctl" data-id="${r.id}">${Object.entries({ relevan: "Relevan", tidak_relevan: "Tidak", pending: "?" })
     .map(([k, l]) => `<button class="${k}" data-rel="${k}" aria-pressed="${r.relevance === k}" title="${REL[k].label}">${l}</button>`).join("")}</span>`;
+}
+function complianceCell(r) {
+  const c = COMPLIANCE[r.compliance_status];
+  return `${progress(r.obl_done, r.obl_total, r.obl_na)}
+    ${c ? `<span class="cstatus ${c.cls}">${c.icon} ${c.label}</span>` : ""}
+    ${r.obl_overdue ? `<span class="cstatus crit">⚠ ${r.obl_overdue} lewat tenggat</span>` : ""}`;
 }
 function progress(done, total, na) {
   const appl = (total || 0) - (na || 0);
@@ -202,10 +228,15 @@ function progress(done, total, na) {
   return `<div class="mini"><div class="meter"><span style="width:${pct}%"></span></div><span class="num">${done || 0}/${appl}</span></div>`;
 }
 
+let regSeq = 0;
 async function loadRegs() {
-  const p = new URLSearchParams({ category: state.cats.join(","), q: $("#reg-q").value,
-    relevance: $("#reg-relevance").value, status: $("#reg-status").value });
-  state.regs = await api("/api/regulations?" + p);
+  const filters = Object.fromEntries(Object.entries(REG_FILTERS).map(([k, sel]) => [k, $(sel).value]));
+  try { localStorage.setItem("lcn.regFilters", JSON.stringify(filters)); } catch (_) { /* ignore */ }
+  $("#reg-reset").hidden = !Object.values(filters).some(Boolean);
+  const seq = ++regSeq;
+  const regs = await api("/api/regulations?" + new URLSearchParams({ category: state.cats.join(","), ...filters }));
+  if (seq !== regSeq) return;  // a newer filter request was sent meanwhile; ignore this stale answer
+  state.regs = regs;
   state.selected.clear();
   $("#reg-table tbody").innerHTML = state.regs.map((r) => `<tr class="clickable" data-row="${r.id}">
       <td><input type="checkbox" data-sel="${r.id}" aria-label="Pilih"></td>
@@ -215,9 +246,10 @@ async function loadRegs() {
       <td><select data-cat-of="${r.id}">${CATS.map((c) => `<option ${c === r.category ? "selected" : ""}>${c}</option>`).join("")}</select></td>
       <td><span class="badge ${r.status_berlaku}">${r.status_berlaku}</span></td>
       <td>${relCtl(r)}</td>
-      <td>${r.relevance === "relevan" ? progress(r.obl_done, r.obl_total, r.obl_na) : ""}</td></tr>`).join("") ||
+      <td>${r.relevance === "relevan" ? complianceCell(r) : ""}</td></tr>`).join("") ||
     `<tr><td colspan="6" class="muted">Tidak ada regulasi untuk filter ini.</td></tr>`;
-  $("#reg-count").textContent = `${state.regs.length} regulasi`;
+  $("#reg-count").textContent = `${state.regs.length} regulasi` +
+    (filters.compliance ? " relevan (filter pemenuhan hanya berlaku untuk regulasi relevan)" : "");
   lock($("#reg-table"));
   $("#reg-all").checked = false;
   updateBulk();
@@ -394,11 +426,14 @@ $("#drawer-body").addEventListener("change", async (e) => {
 });
 
 /* ---------------------------------------------------------------- obligations */
-$("#obl-status").addEventListener("change", loadObligations);
+["input", "change"].forEach((ev) => $("#obl-status").addEventListener(ev, loadObligations));
+let oblSeq = 0;
 async function loadObligations() {
   $("#export-link").href = "/api/export.csv?" + catParam();
   const p = new URLSearchParams({ category: state.cats.join(","), status: $("#obl-status").value });
+  const seq = ++oblSeq;
   const rows = await api("/api/obligations?" + p);
+  if (seq !== oblSeq) return;
   $("#obl-table tbody").innerHTML = rows.map((o) => `<tr data-obl="${o.id}">
       <td><a data-reg="${o.regulation_id}" class="cit" style="cursor:pointer">${esc(o.citation)}</a><div class="judul">${esc(o.category)}${o.pasal ? " · " + esc(o.pasal) : ""}</div></td>
       <td>${esc(o.description)}</td>
