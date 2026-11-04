@@ -458,6 +458,17 @@ $("#obl-table").addEventListener("change", async (e) => {
 /* ---------------------------------------------------------------- sources */
 async function loadSources() {
   const [sources, log, meta] = await Promise.all([api("/api/sources"), api("/api/sync/log"), api("/api/meta")]);
+  const pi = $("#portable-info");
+  pi.hidden = !meta.portable;
+  if (meta.portable) {
+    pi.innerHTML = `<h2>Mode portable — database bersama</h2>
+      <p>Database: <code>${esc(meta.database)}</code></p>
+      <ul class="checks">
+        <li class="ok">✓ Hanya satu komputer yang bisa sinkronisasi dalam satu waktu (komputer lain diberi tahu siapa yang sedang sinkron).</li>
+        <li class="ok">✓ Database dibackup otomatis ke folder <code>backups</code> sebelum setiap sinkronisasi (10 terakhir disimpan).</li>
+        <li class="note">ℹ Sebaiknya sinkronisasi dijalankan oleh satu orang yang ditunjuk, di luar jam sibuk.</li>
+      </ul>`;
+  }
   $("#kw-list").innerHTML = state.cats.filter((c) => meta.search_keywords[c]).map((c) =>
     `<div class="kw-row"><b>${c}</b> ${meta.search_keywords[c].map((k) => `<span class="kw">${esc(k)}</span>`).join("")}</div>`)
     .join("") || `<p class="muted">Kategori terpilih tidak memiliki kata kunci pencarian.</p>`;

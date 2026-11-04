@@ -1,0 +1,63 @@
+# Builds the portable Windows package (Cara A) and runs its self-test on a real Windows runner.
+# The zip is available under the run's "Artifacts"; tags v* also attach it to a GitHub Release.
+name: Portable build
+
+on:
+  push:
+    branches: [main, claude/legal-compliance-app-df6eno]
+    tags: ["v*"]
+    paths:
+      - "app/**"
+      - "launcher.py"
+      - "packaging/**"
+      - "requirements.txt"
+      - ".github/workflows/portable.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Build
+        run: pyinstaller packaging/LegalCompliance.spec --noconfirm
+
+      - name: Self-test the built program
+        shell: pwsh
+        run: |
+          $env:LCN_DATA_DIR = "$env:RUNNER_TEMP\lcn-data"
+          .\dist\LegalCompliance\LegalCompliance.exe --check
+          if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Copy-Item packaging\BACA-SAYA.txt, packaging\data-location.contoh.txt dist\LegalCompliance\
+          Compress-Archive -Path dist\LegalCompliance -DestinationPath LegalComplianceNID-portable-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LegalComplianceNID-portable-windows
+          path: LegalComplianceNID-portable-windows.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LegalComplianceNID-portable-windows.zip

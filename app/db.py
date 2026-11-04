@@ -1,6 +1,10 @@
 """SQLite storage for the compliance register."""
+import getpass
+import glob
+import os
+import socket
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import current_app, g
 
@@ -77,7 +81,25 @@ CREATE TABLE IF NOT EXISTS sync_log (
     updated    INTEGER DEFAULT 0,
     message    TEXT
 );
+
+-- Cross-process locks (e.g. only one computer may run a sync on a shared database).
+CREATE TABLE IF NOT EXISTS locks (
+    name        TEXT PRIMARY KEY,
+    holder      TEXT NOT NULL,
+    acquired_at TEXT NOT NULL
+);
 """
+
+# Server installs use WAL (fast, several workers on one machine). A database on a network share
+# (portable mode) must use the classic rollback journal: WAL needs shared memory on one computer.
+SETTINGS = {"journal_mode": "WAL", "busy_timeout": 15}
+
+
+def configure(journal_mode=None, busy_timeout=None):
+    if journal_mode:
+        SETTINGS["journal_mode"] = journal_mode.upper()
+    if busy_timeout:
+        SETTINGS["busy_timeout"] = float(busy_timeout)
 
 
 def now():
@@ -85,7 +107,7 @@ def now():
 
 
 def connect(path):
-    conn = sqlite3.connect(path, timeout=15)
+    conn = sqlite3.connect(path, timeout=SETTINGS["busy_timeout"])
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -124,7 +146,70 @@ def migrate(conn):
 
 
 def init_db(conn):
-    conn.execute("PRAGMA journal_mode = WAL")  # lets several web workers read while one writes
+    conn.execute(f"PRAGMA journal_mode = {SETTINGS['journal_mode']}")
     conn.executescript(SCHEMA)
     migrate(conn)
     conn.commit()
+
+
+def integrity_ok(conn):
+    """Quick structural check of the database file (returns (ok, message))."""
+    rows = [r[0] for r in conn.execute("PRAGMA quick_check(5)")]
+    return rows == ["ok"], "; ".join(rows)
+
+
+# ---------------------------------------------------------------- locks
+def whoami():
+    try:
+        user = getpass.getuser()
+    except Exception:  # no user name available (e.g. some services)
+        user = "?"
+    return f"{socket.gethostname()} ({user})"
+
+
+def acquire_lock(conn, name, holder, stale_after=timedelta(minutes=30)):
+    """Take a named lock stored in the database. Returns None on success, else the current holder row.
+
+    A lock older than stale_after is considered abandoned (computer crashed or was switched off).
+    """
+    stale = (datetime.now(timezone.utc) - stale_after).isoformat(timespec="seconds")
+    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")  # serialise lock takers across processes / computers
+    try:
+        conn.execute("DELETE FROM locks WHERE name = ? AND acquired_at < ?", (name, stale))
+        row = conn.execute("SELECT * FROM locks WHERE name = ?", (name,)).fetchone()
+        if row is not None and row["holder"] != holder:
+            conn.execute("ROLLBACK")
+            return row
+        conn.execute("INSERT OR REPLACE INTO locks (name, holder, acquired_at) VALUES (?,?,?)", (name, holder, now()))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return None
+
+
+def release_lock(conn, name, holder):
+    conn.execute("DELETE FROM locks WHERE name = ? AND holder = ?", (name, holder))
+    conn.commit()
+
+
+# ---------------------------------------------------------------- backups
+def backup_database(conn, db_path, keep=10):
+    """Copy the database (consistent snapshot) to backups/compliance-YYYYmmdd-HHMMSS.db next to it."""
+    folder = os.path.join(os.path.dirname(os.path.abspath(db_path)), "backups")
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = os.path.join(folder, f"compliance-{stamp}.db")
+    dest = sqlite3.connect(target)
+    try:
+        conn.backup(dest)
+    finally:
+        dest.close()
+    old = sorted(glob.glob(os.path.join(folder, "compliance-*.db")))[:-keep]
+    for path in old:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return target

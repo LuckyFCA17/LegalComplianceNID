@@ -129,7 +129,7 @@ def enforce_auth():
 @bp.get("/healthz")
 def healthz():
     get_db().execute("SELECT 1")
-    return jsonify(ok=True)
+    return jsonify(ok=True, app="LegalComplianceNID")
 
 
 @bp.get("/login")

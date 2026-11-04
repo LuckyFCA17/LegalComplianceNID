@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from .connectors import get_connector
 from .connectors.base import ConnectorError
-from .db import now
+from .db import acquire_lock, backup_database, now, release_lock, whoami
 from .legal import classify, reg_key
 
 DEFAULT_SOURCES = [
@@ -93,6 +93,10 @@ def run_sync(conn, source, categories=None, connector=None):
                 if classify(rec["judul"], rec["jenis"]) not in categories:
                     continue
             stats[upsert_regulation(conn, rec, source["id"])] += 1
+            if stats["fetched"] % 10 == 0:
+                # Short write transactions: never hold the database lock while waiting on the network,
+                # so other users (or other computers on a shared database) are not blocked for minutes.
+                conn.commit()
         conn.commit()
         enrich(conn, conn_obj, categories, stats)
     except ConnectorError as exc:
@@ -226,3 +230,34 @@ def apply_suggestions(conn, regulation_id):
             (regulation_id, it.get("pasal") or "", it["description"], "belum", ts, ts),
         )
     return len(items)
+
+
+class SyncBusy(Exception):
+    """Another user/computer is already running a sync on this database."""
+
+    def __init__(self, holder, since):
+        super().__init__(f"Sinkronisasi sedang dijalankan oleh {holder} sejak {since}. "
+                         "Tunggu sampai selesai, lalu coba lagi.")
+        self.holder, self.since = holder, since
+
+
+def run_sync_job(conn, sources, categories=None, db_path=None, backup=False):
+    """Run a sync over several sources under the database-wide 'sync' lock.
+
+    With backup=True a snapshot of the database is written to backups/ first (portable mode).
+    Raises SyncBusy when someone else holds the lock.
+    """
+    me = whoami()
+    held = acquire_lock(conn, "sync", me)
+    if held is not None:
+        since = datetime.fromisoformat(held["acquired_at"]).astimezone().strftime("%d-%m-%Y %H:%M")
+        raise SyncBusy(held["holder"], since)
+    try:
+        backup_path = backup_database(conn, db_path) if backup and db_path else None
+        results = [run_sync(conn, src, categories) for src in sources]
+        if backup_path:
+            for r in results:
+                r["backup"] = backup_path
+        return results
+    finally:
+        release_lock(conn, "sync", me)

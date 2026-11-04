@@ -10,7 +10,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import db as dbmod
 from .auth import ROLES, bootstrap_admin, create_user
-from .sync import ensure_sources, run_sync
+from .sync import SyncBusy, ensure_sources, run_sync, run_sync_job
 
 
 def _env_flag(name):
@@ -25,7 +25,10 @@ def _secret_key(db_path):
     if not os.path.exists(path):
         with open(path, "w") as f:
             f.write(secrets.token_hex(32))
-        os.chmod(path, 0o600)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass  # e.g. network shares that do not support POSIX permissions
     with open(path) as f:
         return f.read().strip()
 
@@ -43,9 +46,15 @@ def create_app(config=None):
         PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
         # When true, the first admin can only come from ADMIN_EMAIL/ADMIN_PASSWORD, never from the browser.
         REQUIRE_ENV_ADMIN=_env_flag("LCN_REQUIRE_ENV_ADMIN"),
+        # Portable mode: each computer runs its own copy against a database on a network share.
+        PORTABLE=_env_flag("LCN_PORTABLE"),
+        JOURNAL_MODE=os.environ.get("LCN_JOURNAL_MODE") or ("DELETE" if _env_flag("LCN_PORTABLE") else "WAL"),
+        BUSY_TIMEOUT=float(os.environ.get("LCN_BUSY_TIMEOUT") or (60 if _env_flag("LCN_PORTABLE") else 15)),
+        BACKUP_BEFORE_SYNC=_env_flag("LCN_BACKUP_BEFORE_SYNC") or _env_flag("LCN_PORTABLE"),
     )
     if config:
         app.config.update(config)
+    dbmod.configure(app.config["JOURNAL_MODE"], app.config["BUSY_TIMEOUT"])
     os.makedirs(os.path.dirname(os.path.abspath(app.config["DATABASE"])), exist_ok=True)
     if not app.config.get("SECRET_KEY"):
         app.config["SECRET_KEY"] = _secret_key(app.config["DATABASE"])
@@ -56,8 +65,14 @@ def create_app(config=None):
     dbmod.init_db(conn)
     ensure_sources(conn)
     if app.config["SEED_ON_START"] and conn.execute("SELECT COUNT(*) FROM regulations").fetchone()[0] == 0:
-        seed = conn.execute("SELECT * FROM sources WHERE code = 'seed'").fetchone()
-        run_sync(conn, seed)
+        # Two computers opening a fresh shared database at once must not both load the catalogue.
+        me = dbmod.whoami() + f" pid {os.getpid()}"
+        if dbmod.acquire_lock(conn, "seed", me) is None:
+            try:
+                if conn.execute("SELECT COUNT(*) FROM regulations").fetchone()[0] == 0:
+                    run_sync(conn, conn.execute("SELECT * FROM sources WHERE code = 'seed'").fetchone())
+            finally:
+                dbmod.release_lock(conn, "seed", me)
     bootstrap_admin(conn)
     conn.close()
 
@@ -132,8 +147,12 @@ def create_app(config=None):
             rows = [r for r in rows if r]
         else:
             rows = db.execute("SELECT * FROM sources WHERE enabled = 1").fetchall()
-        for r in rows:
-            res = run_sync(db, r, list(categories) or None)
+        try:
+            results = run_sync_job(db, rows, list(categories) or None, db_path=app.config["DATABASE"],
+                                   backup=app.config["BACKUP_BEFORE_SYNC"])
+        except SyncBusy as exc:
+            raise click.ClickException(str(exc))
+        for r, res in zip(rows, results):
             click.echo(f"[{res['status']}] {r['name']}: {res['message']}")
 
     return app

@@ -1,0 +1,3 @@
+# Contoh: ganti nama file ini menjadi data-location.txt untuk menyimpan database di lokasi lain.
+# Baris pertama yang tidak diawali '#' adalah folder data. Semua komputer harus menunjuk folder yang sama.
+\\SERVER\Data\LegalCompliance

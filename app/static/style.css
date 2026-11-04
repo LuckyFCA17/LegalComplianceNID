@@ -238,3 +238,7 @@ a.link { color: var(--accent); }
 .kw { display: inline-block; font-size: 12px; padding: 1px 8px; margin: 0 4px 2px 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink-2); line-height: 1.6; }
 .keywords code { font-size: 12px; }
+
+.portable-info { border-left: 3px solid var(--accent); }
+.portable-info p { margin: 0 0 8px; overflow-wrap: anywhere; }
+.portable-info code { font-size: 12px; }

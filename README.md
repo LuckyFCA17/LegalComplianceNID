@@ -70,6 +70,35 @@ Admin pertama dibuat dengan salah satu cara berikut:
 
 Login gagal 10 kali dalam 15 menit dari IP yang sama akan diblokir sementara.
 
+## Versi portable untuk folder bersama (Cara A)
+Paket Windows siap pakai, tanpa memasang Python. Ekstrak ke folder bersama di server; setiap pengguna cukup
+klik dua kali `LegalCompliance.exe`. Program menjalankan server kecil khusus komputer itu (`127.0.0.1`),
+membuka browser, dan semua komputer memakai database yang sama di folder `data`. Panduan lengkap untuk pengguna:
+`packaging/BACA-SAYA.txt` (ikut di dalam zip).
+
+**Mengunduh:** GitHub → tab *Actions* → workflow **Portable build** → run terbaru → bagian *Artifacts* →
+`LegalComplianceNID-portable-windows`. Tag `v*` (mis. `v1.0.0`) juga melampirkan zip ke halaman *Releases*.
+
+Pengaman untuk database di folder jaringan (aktif otomatis dalam mode portable):
+
+| Pengaman | Fungsi |
+|---|---|
+| Jurnal SQLite `DELETE` (bukan WAL), tunggu antrean 60 detik | WAL tidak aman lintas komputer; komputer lain menunggu giliran alih-alih gagal |
+| Transaksi tulis pendek (commit tiap 10 data saat sinkronisasi) | database tidak terkunci lama saat menunggu situs JDIH |
+| Kunci sinkronisasi di database | hanya satu komputer yang bisa sinkron; yang lain diberi tahu nama komputer & jamnya; kunci yatim kedaluwarsa setelah 30 menit |
+| Backup otomatis sebelum sinkronisasi | `data/backups/compliance-YYYYmmdd-HHMMSS.db`, 10 terakhir disimpan |
+| Cek integritas saat program dibuka | jika database rusak, program menolak berjalan dan menunjukkan cara memulihkan dari backup |
+| Kunci saat pengisian katalog awal | dua komputer yang membuka database baru bersamaan tidak bentrok |
+| Deteksi "sudah berjalan" | membuka program dua kali di komputer yang sama hanya membuka tab browser baru |
+
+Lokasi database bisa dipindah dengan `data-location.txt` (lihat `data-location.contoh.txt`) atau variabel
+`LCN_DATA_DIR`. Uji paket tanpa membuka browser: `LegalCompliance.exe --check`.
+
+Membangun sendiri (di Windows): `pip install -r requirements.txt pyinstaller` lalu
+`pyinstaller packaging/LegalCompliance.spec --noconfirm`. Dari kode sumber: `python launcher.py`.
+
+Cara A cocok untuk tim kecil. Untuk banyak pengguna bersamaan, jalankan aplikasi di server (Cara B).
+
 ## Deploy online (Render)
 File `render.yaml` sudah disiapkan (Render Blueprint, region Singapura, disk persisten 1 GB untuk database).
 

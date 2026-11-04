@@ -1,0 +1,96 @@
+LEGAL COMPLIANCE NID — VERSI PORTABLE (CARA A: FOLDER BERSAMA)
+=================================================================
+
+Isi paket
+---------
+  LegalCompliance.exe        program (klik dua kali untuk membuka)
+  _internal\                 komponen program — jangan diubah/dihapus
+  data-location.contoh.txt   contoh untuk memindahkan lokasi database (opsional)
+  BACA-SAYA.txt              panduan ini
+
+Folder "data" (database, backup) dibuat otomatis saat program pertama kali dibuka.
+
+
+1. PEMASANGAN (sekali, oleh admin/IT)
+-------------------------------------
+  a. Ekstrak zip ini ke folder bersama di server, misalnya
+        \\SERVER\Aplikasi\LegalCompliance\
+  b. Beri pengguna izin BACA + TULIS ke folder tersebut (folder "data" akan
+     dibuat di dalamnya). Tanpa izin tulis, aplikasi tidak bisa menyimpan data.
+  c. Buka LegalCompliance.exe dari satu komputer. Browser akan terbuka dan
+     meminta pembuatan akun ADMIN pertama.
+  d. Di tab "Pengguna", buat akun untuk setiap anggota tim.
+
+  Windows mungkin menampilkan "Windows protected your PC" karena program belum
+  bertanda tangan digital: klik "More info" -> "Run anyway". Jika antivirus
+  perusahaan memblokir, minta IT menambahkan pengecualian untuk folder ini.
+
+
+2. PEMAKAIAN SEHARI-HARI (setiap pengguna)
+------------------------------------------
+  - Buka \\SERVER\Aplikasi\LegalCompliance\ lalu klik dua kali LegalCompliance.exe
+    (bisa dibuat shortcut ke Desktop: klik kanan -> Send to -> Desktop).
+  - Jendela hitam akan muncul dan browser terbuka otomatis. Login dengan akun Anda.
+  - BIARKAN jendela hitam tetap terbuka selama memakai aplikasi.
+    Menutup jendela itu = menutup aplikasi di komputer Anda.
+  - Membuka program dua kali di komputer yang sama hanya membuka tab browser baru.
+
+
+3. SINKRONISASI JDIH — ATURAN PENTING
+-------------------------------------
+  Database dipakai bersama oleh banyak komputer melalui jaringan. Agar data aman:
+  - Hanya SATU komputer yang bisa sinkronisasi dalam satu waktu. Jika orang lain
+    sedang sinkron, Anda akan mendapat pesan "Sinkronisasi sedang dijalankan
+    oleh <nama komputer>". Tunggu sampai selesai.
+  - Tunjuk satu orang (mis. admin) untuk menjalankan sinkronisasi, sebaiknya di
+    luar jam sibuk (pagi sebelum kerja / sore setelah kerja).
+  - Jangan menutup jendela hitam atau mematikan komputer saat sinkronisasi
+    berjalan (1–5 menit).
+  - Komputer yang menjalankan sinkronisasi harus bisa membuka
+    peraturan.bpk.go.id dan jdih.kemnaker.go.id dari browser-nya.
+  - Sebelum setiap sinkronisasi, database otomatis dibackup ke data\backups\
+    (10 backup terakhir disimpan).
+
+
+4. JIKA ADA MASALAH
+-------------------
+  "Folder data tidak bisa ditulis"
+      -> Anda tidak punya izin tulis ke folder bersama. Hubungi IT.
+
+  "DATABASE RUSAK — aplikasi tidak dijalankan"
+      1. Minta SEMUA pengguna menutup aplikasi (tutup jendela hitam).
+      2. Ganti nama data\compliance.db menjadi compliance-rusak.db.
+      3. Salin backup terbaru dari data\backups\ (nama file berisi tanggal &
+         jam), lalu ganti namanya menjadi compliance.db di folder data\.
+      4. Buka aplikasi lagi. Perubahan setelah waktu backup perlu diisi ulang.
+
+  Aplikasi lambat atau muncul "database is locked"
+      -> Ada komputer lain yang sedang menyimpan banyak data (mis. sinkronisasi).
+         Tunggu sebentar lalu ulangi.
+
+  Lupa password admin
+      -> Admin lain dapat mereset password di tab "Pengguna".
+
+
+5. MEMINDAHKAN LOKASI DATABASE (opsional)
+-----------------------------------------
+  Secara bawaan database ada di folder "data" di samping program. Untuk
+  menyimpannya di tempat lain (mis. program disalin ke tiap komputer, tetapi
+  database tetap di server):
+  - Ganti nama data-location.contoh.txt menjadi data-location.txt
+  - Isi baris pertamanya dengan lokasi folder data, contoh:
+        \\SERVER\Data\LegalCompliance
+  Semua komputer harus menunjuk ke folder yang SAMA.
+
+
+6. BACKUP MANUAL
+----------------
+  Salin seluruh folder data\ ke tempat lain secara berkala (mis. mingguan),
+  saat tidak ada yang sedang memakai aplikasi.
+
+
+Batasan Cara A
+--------------
+  Cara ini cocok untuk tim kecil (beberapa pengguna). Jika pengguna bertambah
+  banyak atau sering bekerja bersamaan, gunakan Cara B: aplikasi dijalankan di
+  server dan semua orang membukanya lewat browser.

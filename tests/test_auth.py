@@ -29,7 +29,7 @@ def test_requires_login(app):
     r = c.get("/")
     assert r.status_code == 302 and r.headers["Location"].endswith("/login")
     assert c.get("/login").status_code == 200
-    assert c.get("/healthz").get_json() == {"ok": True}
+    assert c.get("/healthz").get_json() == {"ok": True, "app": "LegalComplianceNID"}
 
 
 def test_first_run_setup_then_locked(app):

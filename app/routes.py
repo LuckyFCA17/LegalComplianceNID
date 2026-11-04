@@ -13,7 +13,7 @@ from .db import get_db, now
 from .legal import CATEGORIES, citation, parse_search, search_score
 from .connectors import get_connector
 from .connectors.base import DEFAULT_KEYWORDS, ConnectorError
-from .sync import apply_suggestions, resolve_regulation, run_sync, upsert_regulation
+from .sync import SyncBusy, apply_suggestions, resolve_regulation, run_sync_job, upsert_regulation
 
 bp = Blueprint("api", __name__)
 
@@ -94,7 +94,10 @@ def index():
 @bp.get("/api/meta")
 def meta():
     return jsonify(categories=CATEGORIES, relevance=RELEVANCE, obligation_status=OBL_STATUS,
-                   regulation_status=REG_STATUS, search_keywords=DEFAULT_KEYWORDS)
+                   regulation_status=REG_STATUS, search_keywords=DEFAULT_KEYWORDS,
+                   portable=current_app.config["PORTABLE"],
+                   database=current_app.config["DATABASE"] if current_app.config["PORTABLE"] else None,
+                   backup_before_sync=current_app.config["BACKUP_BEFORE_SYNC"])
 
 
 # ---------------------------------------------------------------- sources & sync
@@ -174,7 +177,11 @@ def sync():
         rows = db.execute(f"SELECT * FROM sources WHERE {_in_clause('id', ids, params)}", params).fetchall()
     else:
         rows = db.execute("SELECT * FROM sources WHERE enabled = 1").fetchall()
-    results = [run_sync(db, r, cats) for r in rows]
+    try:
+        results = run_sync_job(db, rows, cats, db_path=current_app.config["DATABASE"],
+                               backup=current_app.config["BACKUP_BEFORE_SYNC"])
+    except SyncBusy as exc:
+        return jsonify(error=str(exc), holder=exc.holder), 409
     return jsonify(results)
 
 
