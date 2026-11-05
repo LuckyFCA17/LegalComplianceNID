@@ -318,3 +318,51 @@ def test_search_words_need_most_matches_and_phrase_ranks_first(client):
     # A type named in the search restricts the results to that type.
     rows = client.get("/api/regulations", query_string={"category": "K3", "q": "PP kesehatan kerja"}).get_json()
     assert {r["jenis"] for r in rows} == {"PP"}
+
+
+def test_obligation_filters_and_export(client):
+    from datetime import date, timedelta
+    today = date.today()
+    regs = client.get("/api/regulations?category=K3").get_json()
+    by = {r["citation"]: r["id"] for r in regs}
+    uu1, pp50 = by["UU No. 1 Tahun 1970"], by["PP No. 50 Tahun 2012"]
+    for rid in (uu1, pp50):
+        client.patch(f"/api/regulations/{rid}", json={"relevance": "relevan"})
+    o_uu = client.get(f"/api/regulations/{uu1}").get_json()["obligations"]
+    o_pp = client.get(f"/api/regulations/{pp50}").get_json()["obligations"]
+    plan = [  # (obligation, pic, due date, status)
+        (o_uu[0], "HSE", (today - timedelta(days=5)).isoformat(), "belum"),      # overdue
+        (o_uu[1], "hse ", (today + timedelta(days=10)).isoformat(), "proses"),   # next 30 days, same PIC
+        (o_uu[2], "HRD", (today + timedelta(days=90)).isoformat(), "belum"),
+        (o_uu[3], "", "", "belum"),                                                # no PIC, no due date
+        (o_pp[0], "Legal", (today - timedelta(days=1)).isoformat(), "terpenuhi"),  # past but done: not overdue
+    ]
+    for o, pic, due, st in plan:
+        client.patch(f"/api/obligations/{o['id']}", json={"pic": pic, "due_date": due, "status": st})
+
+    def ids(**args):
+        res = client.get("/api/obligations", query_string={"category": "K3", **args}).get_json()
+        return {o["id"] for o in res["items"]}
+
+    total = len(o_uu) + len(o_pp)
+    assert client.get("/api/obligations?category=K3").get_json()["total"] == total
+    assert ids(regulation_id=pp50) == {o["id"] for o in o_pp}
+    assert ids(pic="HSE") == {plan[0][0]["id"], plan[1][0]["id"]}  # case/space-insensitive
+    assert plan[3][0]["id"] in ids(pic="__none__")
+    assert ids(due="overdue") == {plan[0][0]["id"]}
+    assert ids(due="next30") == {plan[1][0]["id"]}
+    assert plan[3][0]["id"] in ids(due="none") and plan[0][0]["id"] not in ids(due="none")
+    window = ids(due="range", due_from=today.isoformat(), due_to=(today + timedelta(days=100)).isoformat())
+    assert window == {plan[1][0]["id"], plan[2][0]["id"]}
+    assert ids(regulation_id=uu1, pic="HSE", status="proses") == {plan[1][0]["id"]}  # filters combine
+
+    assert client.get("/api/obligations?due=range&due_from=2026-12-31&due_to=2026-01-01").status_code == 400
+    assert client.get("/api/obligations?due_from=31-12-2026").status_code == 400
+
+    fc = client.get("/api/obligations/facets?category=K3").get_json()
+    assert [p["pic"] for p in fc["pics"]] == ["HRD", "HSE", "Legal"]
+    assert next(p for p in fc["pics"] if p["pic"] == "HSE")["count"] == 2
+    assert fc["no_pic"] >= 1 and {r["id"] for r in fc["regulations"]} == {uu1, pp50}
+
+    csv_text = client.get("/api/export.csv", query_string={"category": "K3", "pic": "HSE"}).get_data(as_text=True)
+    assert csv_text.count("\n") == 3  # header + the two HSE obligations

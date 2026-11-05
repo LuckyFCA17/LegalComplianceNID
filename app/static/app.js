@@ -457,14 +457,57 @@ $("#drawer-body").addEventListener("change", async (e) => {
 });
 
 /* ---------------------------------------------------------------- obligations */
-["input", "change"].forEach((ev) => $("#obl-status").addEventListener(ev, loadObligations));
+const OBL_FILTERS = { regulation_id: "#obl-reg", pic: "#obl-pic", due: "#obl-due", due_from: "#obl-from",
+  due_to: "#obl-to", status: "#obl-status" };
+const NO_PIC = "__none__";
+let oblSaved = {};
+try { oblSaved = JSON.parse(localStorage.getItem("lcn.oblFilters") || "{}"); } catch (_) { /* storage unavailable */ }
+// Restore saved filters; regulation and PIC are restored once their choices are loaded (loadOblFacets).
+["due", "due_from", "due_to", "status"].forEach((k) => { if (oblSaved[k]) $(OBL_FILTERS[k]).value = oblSaved[k]; });
+let oblTimer;
+Object.values(OBL_FILTERS).forEach((sel) => ["input", "change"].forEach((ev) => $(sel).addEventListener(ev, () => {
+  clearTimeout(oblTimer);
+  oblTimer = setTimeout(loadObligations, 150);
+})));
+$("#obl-reset").addEventListener("click", () => {
+  Object.values(OBL_FILTERS).forEach((sel) => { $(sel).value = ""; });
+  loadObligations();
+});
+function oblFilters() {
+  const f = Object.fromEntries(Object.entries(OBL_FILTERS).map(([k, sel]) => [k, $(sel).value]));
+  if (f.due !== "range") { f.due_from = ""; f.due_to = ""; }
+  return f;
+}
+function fillSelect(sel, first, options, current) {
+  $(sel).innerHTML = `<option value="">${first}</option>` + options.map(([v, label]) =>
+    `<option value="${esc(v)}">${esc(label)}</option>`).join("");
+  $(sel).value = options.some(([v]) => String(v) === String(current)) ? current : "";
+}
+async function loadOblFacets() {
+  const fc = await api("/api/obligations/facets?" + catParam());
+  const cur = { reg: $("#obl-reg").value || oblSaved.regulation_id || "", pic: $("#obl-pic").value || oblSaved.pic || "" };
+  fillSelect("#obl-reg", "Regulasi: semua",
+    fc.regulations.map((r) => [r.id, `${r.citation} — ${r.judul.length > 50 ? r.judul.slice(0, 50) + "…" : r.judul} (${r.count})`]), cur.reg);
+  fillSelect("#obl-pic", "PIC: semua",
+    fc.pics.map((p) => [p.pic, `${p.pic} (${p.count})`]).concat(fc.no_pic ? [[NO_PIC, `(belum ada PIC) (${fc.no_pic})`]] : []), cur.pic);
+  oblSaved = {};
+}
 let oblSeq = 0;
-async function loadObligations() {
-  $("#export-link").href = "/api/export.csv?" + catParam();
-  const p = new URLSearchParams({ category: state.cats.join(","), status: $("#obl-status").value });
+async function loadObligations(skipFacets) {
+  if (skipFacets !== true) await loadOblFacets();
+  const f = oblFilters();
+  $("#obl-range").hidden = f.due !== "range";
+  try { localStorage.setItem("lcn.oblFilters", JSON.stringify(f)); } catch (_) { /* ignore */ }
+  const active = Object.values(f).some(Boolean);
+  $("#obl-reset").hidden = !active;
+  const p = new URLSearchParams({ category: state.cats.join(","), ...f });
+  $("#export-link").href = "/api/export.csv?" + p;
+  $("#export-link").textContent = active ? "Ekspor hasil filter (CSV)" : "Ekspor register (CSV)";
   const seq = ++oblSeq;
-  const rows = await api("/api/obligations?" + p);
+  let res;
+  try { res = await api("/api/obligations?" + p); } catch (err) { return toast(err.message); }
   if (seq !== oblSeq) return;
+  const rows = res.items;
   $("#obl-table tbody").innerHTML = rows.map((o) => `<tr data-obl="${o.id}">
       <td><a data-reg="${o.regulation_id}" class="cit" style="cursor:pointer">${esc(o.citation)}</a><div class="judul">${esc(o.category)}${o.pasal ? " · " + esc(o.pasal) : ""}</div></td>
       <td>${esc(o.description)}</td>
@@ -473,8 +516,10 @@ async function loadObligations() {
       <td><select name="status">${Object.entries(OBL).map(([k, v]) =>
         `<option value="${k}" ${k === o.status ? "selected" : ""}>${v.icon} ${v.label}</option>`).join("")}</select></td>
       <td><input type="text" name="evidence" value="${esc(o.evidence)}" placeholder="Bukti"></td></tr>`).join("") ||
-    `<tr><td colspan="6" class="muted">Belum ada kewajiban. Tandai regulasi sebagai relevan di tab Regulasi.</td></tr>`;
-  $("#obl-count").textContent = `${rows.length} kewajiban dari regulasi relevan`;
+    `<tr><td colspan="6" class="muted">${active ? "Tidak ada kewajiban yang sesuai filter." : "Belum ada kewajiban. Tandai regulasi sebagai relevan di tab Regulasi."}</td></tr>`;
+  $("#obl-count").textContent = active
+    ? `${rows.length} dari ${res.total} kewajiban sesuai filter`
+    : `${rows.length} kewajiban dari regulasi relevan`;
   lock($("#obl-table"));
 }
 $("#obl-table").addEventListener("change", async (e) => {
@@ -483,6 +528,7 @@ $("#obl-table").addEventListener("change", async (e) => {
   try {
     await api(`/api/obligations/${tr.dataset.obl}`, { method: "PATCH", body: { [e.target.name]: e.target.value } });
     toast("Tersimpan");
+    if (e.target.name === "pic") loadOblFacets();
   } catch (err) { toast(err.message); }
 });
 

@@ -122,11 +122,24 @@
   <!-- PEMENUHAN -->
   <section id="tab-pemenuhan" class="tab">
     <div class="toolbar">
-      <select id="obl-status">
-        <option value="">Semua status</option>
+      <select id="obl-reg" aria-label="Filter regulasi"><option value="">Regulasi: semua</option></select>
+      <select id="obl-pic" aria-label="Filter PIC"><option value="">PIC: semua</option></select>
+      <select id="obl-due" aria-label="Filter tenggat">
+        <option value="">Tenggat: semua</option>
+        <option value="overdue">⚠ Lewat tenggat</option>
+        <option value="next30">Jatuh tempo 30 hari ke depan</option>
+        <option value="range">Rentang tanggal…</option>
+        <option value="none">Tanpa tenggat</option>
+      </select>
+      <span id="obl-range" class="date-range" hidden>
+        <input type="date" id="obl-from" aria-label="Tenggat dari"> s.d. <input type="date" id="obl-to" aria-label="Tenggat sampai">
+      </span>
+      <select id="obl-status" aria-label="Filter status">
+        <option value="">Status: semua</option>
         <option value="belum">Belum</option><option value="proses">Dalam proses</option>
         <option value="terpenuhi">Terpenuhi</option><option value="tidak_berlaku">Tidak berlaku</option>
       </select>
+      <button class="link" id="obl-reset" hidden>Reset filter</button>
       <span class="spacer"></span>
       <a class="button secondary" id="export-link" href="/api/export.csv">Ekspor register (CSV)</a>
     </div>

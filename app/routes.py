@@ -4,7 +4,7 @@ import io
 import json
 import os
 import re
-from datetime import date
+from datetime import date, timedelta
 from urllib.parse import quote_plus, urlparse
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, request, send_from_directory
@@ -862,26 +862,100 @@ def delete_obligation(oid):
     return "", 204
 
 
-def _obligation_rows(cats):
+NO_PIC = "__none__"  # filter value for obligations without a PIC
+DUE_PRESETS = ("overdue", "next30", "none", "range")
+
+
+def _date_arg(name):
+    val = (request.args.get(name) or "").strip()
+    if not val:
+        return None
+    try:
+        return date.fromisoformat(val).isoformat()
+    except ValueError:
+        abort(400, f"Format {name} harus YYYY-MM-DD")
+
+
+def _obligation_filters():
+    """Filters of the Pemenuhan tab (also used by the CSV export): regulation, PIC, due date, status."""
+    f = {"status": request.args.get("status") if request.args.get("status") in OBL_STATUS else None,
+         "pic": (request.args.get("pic") or "").strip() or None,
+         "due": request.args.get("due") if request.args.get("due") in DUE_PRESETS else None,
+         "due_from": _date_arg("due_from"), "due_to": _date_arg("due_to"), "regulation_id": None}
+    try:
+        f["regulation_id"] = int(request.args.get("regulation_id")) if request.args.get("regulation_id") else None
+    except ValueError:
+        abort(400, "regulation_id tidak valid")
+    if f["due_from"] and f["due_to"] and f["due_from"] > f["due_to"]:
+        abort(400, "Tanggal awal harus sebelum tanggal akhir")
+    return f
+
+
+def _obligation_rows(cats, filters=None):
     where, params = ["r.relevance = 'relevan'"], []
     if cats:
         where.append(_in_clause("r.category", cats, params))
+    f = filters or {}
+    if f.get("status"):
+        where.append("o.status = ?")
+        params.append(f["status"])
+    if f.get("regulation_id"):
+        where.append("o.regulation_id = ?")
+        params.append(f["regulation_id"])
+    if f.get("pic") == NO_PIC:
+        where.append("TRIM(COALESCE(o.pic, '')) = ''")
+    elif f.get("pic"):
+        where.append("TRIM(o.pic) = ? COLLATE NOCASE")
+        params.append(f["pic"])
+    today = date.today()
+    open_status = "o.status IN ('belum', 'proses')"
+    if f.get("due") == "overdue":  # same definition as the dashboard
+        where.append(f"o.due_date IS NOT NULL AND o.due_date != '' AND o.due_date < ? AND {open_status}")
+        params.append(today.isoformat())
+    elif f.get("due") == "next30":
+        where.append(f"o.due_date >= ? AND o.due_date <= ? AND {open_status}")
+        params += [today.isoformat(), (today + timedelta(days=30)).isoformat()]
+    elif f.get("due") == "none":
+        where.append("COALESCE(o.due_date, '') = ''")
+    if f.get("due") in (None, "range"):
+        if f.get("due_from"):
+            where.append("o.due_date >= ?")
+            params.append(f["due_from"])
+        if f.get("due_to"):
+            where.append("o.due_date != '' AND o.due_date <= ?")
+            params.append(f["due_to"])
     return get_db().execute(
         f"""SELECT o.*, r.jenis, r.nomor, r.tahun, r.judul, r.category, r.status_berlaku
             FROM obligations o JOIN regulations r ON r.id = o.regulation_id
-            WHERE {' AND '.join(where)} ORDER BY r.category, r.id, o.id""", params).fetchall()
+            WHERE {' AND '.join(where)}
+            ORDER BY r.category, r.id, o.id""", params).fetchall()
 
 
 @bp.get("/api/obligations")
 def list_obligations():
+    rows = _obligation_rows(_categories_arg(), _obligation_filters())
+    total = get_db().execute("SELECT COUNT(*) FROM obligations o JOIN regulations r ON r.id = o.regulation_id "
+                             "WHERE r.relevance = 'relevan'").fetchone()[0]
+    return jsonify(items=[{**dict(r), "citation": citation(r)} for r in rows], total=total)
+
+
+@bp.get("/api/obligations/facets")
+def obligation_facets():
+    """Choices for the Pemenuhan filters: regulations and PICs that have obligations (within the categories)."""
     rows = _obligation_rows(_categories_arg())
-    status = request.args.get("status")
-    out = []
+    regs, pics, no_pic = {}, {}, 0
     for r in rows:
-        if status in OBL_STATUS and r["status"] != status:
-            continue
-        out.append({**dict(r), "citation": citation(r)})
-    return jsonify(out)
+        reg = regs.setdefault(r["regulation_id"], {"id": r["regulation_id"], "citation": citation(r),
+                                                   "judul": r["judul"], "count": 0})
+        reg["count"] += 1
+        pic = " ".join((r["pic"] or "").split())
+        if pic:
+            key = pic.lower()
+            pics.setdefault(key, {"pic": pic, "count": 0})["count"] += 1
+        else:
+            no_pic += 1
+    return jsonify(regulations=sorted(regs.values(), key=lambda x: x["citation"]),
+                   pics=sorted(pics.values(), key=lambda x: x["pic"].lower()), no_pic=no_pic)
 
 
 # ---------------------------------------------------------------- dashboard & export
@@ -952,7 +1026,7 @@ def dashboard():
 
 @bp.get("/api/export.csv")
 def export_csv():
-    rows = _obligation_rows(_categories_arg())
+    rows = _obligation_rows(_categories_arg(), _obligation_filters())
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Kategori", "Regulasi", "Tentang", "Status Regulasi", "Pasal", "Kewajiban", "PIC",

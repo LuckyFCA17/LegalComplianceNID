@@ -301,3 +301,9 @@ label.check { display: inline-flex; align-items: center; gap: 6px; color: var(--
 .ocr-progress .meter > span { background: var(--accent); }
 .ocr-need .an-actions { margin-top: 8px; }
 .an-edit textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; margin-bottom: 8px; }
+
+/* Pemenuhan filters */
+#obl-reg { max-width: 360px; }
+#obl-pic { max-width: 220px; }
+.date-range { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
+.date-range[hidden] { display: none; }
