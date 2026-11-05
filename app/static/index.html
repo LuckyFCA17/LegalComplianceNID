@@ -93,6 +93,7 @@
         <option value="pemenuhan_desc">Pemenuhan tertinggi</option>
         <option value="judul">Judul A–Z</option>
       </select>
+      <label class="check" title="Juga mencari di teks peraturan yang sudah diambil untuk analisa"><input type="checkbox" id="reg-in-text"> Cari juga di isi peraturan</label>
       <button class="link" id="reg-reset" hidden>Reset filter</button>
       <span class="spacer"></span>
       <button id="btn-add-reg" class="secondary editor-only">+ Tambah manual</button>
@@ -226,6 +227,20 @@
     </div>
   </section>
 </main>
+
+<dialog id="dlg-analysis" class="dlg-analysis">
+  <div class="an-head">
+    <div><h2 id="an-title"></h2><p class="muted" id="an-sub"></p></div>
+    <button class="close" id="an-close" aria-label="Tutup">×</button>
+  </div>
+  <div id="an-body"></div>
+  <div class="an-foot" id="an-foot" hidden>
+    <span id="an-count" class="muted"></span>
+    <span class="spacer"></span>
+    <button id="an-apply" class="editor-only">Tambahkan ke kewajiban</button>
+  </div>
+  <input type="file" id="an-file" accept=".pdf,.txt" hidden>
+</dialog>
 
 <dialog id="dlg-source">
   <form method="dialog" id="form-source" class="form">

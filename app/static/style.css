@@ -253,3 +253,41 @@ a.link { color: var(--accent); }
 .form .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; overflow-wrap: anywhere; }
 .form .hint code, #dlg-source code { font-size: 12px; }
 #dlg-source { width: min(640px, calc(100% - 32px)); }
+
+/* offline legal analysis */
+label.check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
+.snippet { color: var(--muted); font-size: 12px; margin-top: 4px; font-style: italic; max-width: 720px; }
+.dlg-analysis { width: min(1180px, calc(100% - 24px)); max-height: calc(100vh - 24px); padding: 0; display: none; }
+.dlg-analysis[open] { display: flex; flex-direction: column; }
+.an-head { display: flex; justify-content: space-between; gap: 12px; padding: 20px 24px 8px; border-bottom: 1px solid var(--grid); }
+.an-head h2 { margin: 0 0 4px; }
+.an-head p { margin: 0 0 8px; }
+.an-head .close { position: static; }
+#an-body { padding: 16px 24px; overflow-y: auto; flex: 1; }
+.an-foot { display: flex; align-items: center; gap: 12px; padding: 12px 24px; border-top: 1px solid var(--grid); background: var(--surface); }
+.an-source { background: var(--surface-2); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.an-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.an-paste textarea { width: 100%; margin-bottom: 8px; }
+.an-note { font-size: 13px; color: var(--ink-2); background: var(--surface); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 6px; }
+.an-warn { font-size: 13px; color: var(--critical); }
+.an-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.an-filters .chip b { margin-left: 4px; }
+.an-list { display: flex; flex-direction: column; gap: 10px; }
+.an-item { display: flex; gap: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.an-item.added { opacity: .7; }
+.an-item > input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
+.an-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.an-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.tag.t-kewajiban { background: rgba(42, 120, 214, .14); color: var(--accent); }
+.tag.t-larangan { background: rgba(208, 59, 59, .12); color: var(--critical); }
+.tag.t-pelaporan, .tag.t-perizinan { background: rgba(250, 178, 25, .18); color: var(--ink); }
+.tag.t-ok { background: rgba(12, 163, 12, .14); color: var(--good); }
+.tag.conf-rendah { opacity: .75; }
+.an-desc { width: 100%; }
+.an-main details summary { cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.quote { font-size: 13px; color: var(--ink-2); margin: 6px 0 0; line-height: 1.5; }
+.quote.ctx { color: var(--muted); }
+.an-sanctions { margin-top: 16px; font-size: 13px; }
+.an-sanctions summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 640px) { .an-head, #an-body, .an-foot { padding-left: 16px; padding-right: 16px; } }

@@ -135,6 +135,31 @@ Pasang di belakang HTTPS (reverse proxy) dan set `LCN_SECURE_COOKIES=1` + `LCN_B
 **Backup:** salin file database (`/var/data/compliance.db`) secara berkala, misalnya lewat *Shell* di dashboard Render:
 `sqlite3 /var/data/compliance.db ".backup /var/data/backup.db"`.
 
+## Analisa isi peraturan (offline)
+Di panel detail peraturan → **Buka analisa isi**. Berjalan tanpa internet dan tanpa layanan AI, sehingga juga
+berfungsi di versi portable.
+
+1. **Teks**: *Ambil dari PDF resmi* (tautan PDF JDIH), *Unggah PDF / teks*, atau *Tempel teks*. Teks disimpan
+   di database (tabel `regulation_texts`). PDF hasil scan tanpa lapisan teks ditandai; tempel teks hasil OCR.
+2. **Pasal & ayat**: kop halaman, nomor halaman dan kata terpotong dibersihkan; bagian *Penjelasan* dilewati.
+3. **Usulan persyaratan** dari pola bahasa peraturan:
+
+| Jenis | Dikenali dari |
+|---|---|
+| Kewajiban | *wajib, diwajibkan, berkewajiban, harus* |
+| Larangan | *dilarang, tidak boleh, tidak diperbolehkan* |
+| Pelaporan | kewajiban + *melaporkan, menyampaikan laporan* |
+| Perizinan / dokumen | kewajiban + *memiliki/memperoleh izin, persetujuan, pengesahan, sertifikat, lisensi* |
+
+   Setiap usulan menyebut pihak (perusahaan, pekerja/personel K3, pemerintah), tingkat keyakinan, tenggat atau
+   frekuensi (*paling lambat 30 hari*, *setiap 3 tahun*), dan pasal sanksi yang merujuknya. Definisi (Pasal 1)
+   dilewati; kewajiban pemerintah tidak dicentang otomatis.
+4. **Tambahkan ke kewajiban**: usulan yang dicentang (deskripsi bisa diedit) menjadi kewajiban dengan pasal,
+   catatan waktu & sanksi; pasal yang sudah ada tidak digandakan.
+
+Centang **Cari juga di isi peraturan** di tab Regulasi untuk mencari kata di teks yang sudah diambil.
+Hasil analisa adalah usulan otomatis untuk diperiksa manusia, bukan nasihat hukum.
+
 ## Kustomisasi (admin)
 **Kategori & kata kunci — tab *Pengaturan*.** Kategori bawaan K3, Lingkungan, Ketenagakerjaan dan Lainnya
 bisa diubah, dan kategori baru bisa ditambah (maks. 20). Setiap kategori punya dua daftar:

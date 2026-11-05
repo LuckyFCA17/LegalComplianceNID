@@ -83,7 +83,21 @@ Folder "data" (database, backup) dibuat otomatis saat program pertama kali dibuk
   Semua komputer harus menunjuk ke folder yang SAMA.
 
 
-6. BACKUP MANUAL
+6. ANALISA ISI PERATURAN (OFFLINE)
+-----------------------------------
+  Di panel detail peraturan, tekan "Buka analisa isi":
+  - "Ambil dari PDF resmi" mengunduh PDF dari JDIH, atau "Unggah PDF / teks"
+    bila situs tidak bisa diakses, atau "Tempel teks".
+  - Aplikasi memecah teks per pasal dan mengusulkan kewajiban, larangan,
+    pelaporan dan perizinan, lengkap dengan pihak, tenggat dan sanksi.
+  - Periksa usulan, ubah deskripsinya bila perlu, centang, lalu tekan
+    "Tambahkan ke kewajiban". Hasil otomatis — bukan nasihat hukum.
+  - PDF hasil scan (tanpa teks) tidak bisa dibaca; tempel teks hasil OCR.
+  - Centang "Cari juga di isi peraturan" di tab Regulasi untuk mencari kata
+    di dalam teks peraturan yang sudah diambil.
+
+
+7. BACKUP MANUAL
 ----------------
   Salin seluruh folder data\ ke tempat lain secara berkala (mis. mingguan),
   saat tidak ada yang sedang memakai aplikasi.

@@ -94,6 +94,18 @@ CREATE TABLE IF NOT EXISTS categories (
     updated_at       TEXT NOT NULL
 );
 
+-- Full text of a regulation (from its PDF, an uploaded file or pasted text) for analysis and search.
+CREATE TABLE IF NOT EXISTS regulation_texts (
+    regulation_id INTEGER PRIMARY KEY REFERENCES regulations(id) ON DELETE CASCADE,
+    origin        TEXT NOT NULL,           -- pdf_url | upload | paste
+    filename      TEXT,
+    pages         INTEGER,
+    scanned       INTEGER NOT NULL DEFAULT 0, -- 1 = little or no text layer (scan); needs OCR elsewhere
+    text          TEXT NOT NULL,
+    fetched_at    TEXT NOT NULL,
+    fetched_by    TEXT
+);
+
 -- Cross-process locks (e.g. only one computer may run a sync on a shared database).
 CREATE TABLE IF NOT EXISTS locks (
     name        TEXT PRIMARY KEY,

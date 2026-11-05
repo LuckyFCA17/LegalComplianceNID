@@ -8,7 +8,7 @@ a = Analysis(
     [os.path.join(ROOT, "launcher.py")],
     pathex=[ROOT],
     datas=[(os.path.join(ROOT, "app", "static"), os.path.join("app", "static"))],
-    hiddenimports=["waitress", "app.auth", "app.routes"],
+    hiddenimports=["waitress", "app.auth", "app.routes", "app.analysis", "pypdf"],
     excludes=["pytest", "gunicorn", "tkinter"],
     noarchive=False,
 )

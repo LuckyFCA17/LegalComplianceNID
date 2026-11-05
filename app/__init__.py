@@ -39,7 +39,7 @@ def create_app(config=None):
     app.config.update(
         DATABASE=os.environ.get("LCN_DATABASE", os.path.join(app.instance_path, "compliance.db")),
         SEED_ON_START=True,
-        MAX_CONTENT_LENGTH=10 * 1024 * 1024,
+        MAX_CONTENT_LENGTH=45 * 1024 * 1024,  # regulation PDFs can be large
         # Behind HTTPS (e.g. Render) cookies must be Secure; SameSite=Lax blocks cross-site POSTs (CSRF).
         SESSION_COOKIE_SECURE=_env_flag("LCN_SECURE_COOKIES"),
         SESSION_COOKIE_HTTPONLY=True,

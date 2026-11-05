@@ -211,14 +211,17 @@ const COMPLIANCE = {
 try {
   const saved = JSON.parse(localStorage.getItem("lcn.regFilters") || "{}");
   Object.entries(REG_FILTERS).forEach(([k, sel]) => { if (saved[k] != null) $(sel).value = saved[k]; });
+  $("#reg-in-text").checked = saved.in_text === "1";
 } catch (_) { /* storage unavailable */ }
 
 let regTimer;
 function scheduleRegs() { clearTimeout(regTimer); regTimer = setTimeout(loadRegs, 200); }
 // Some mobile browsers only fire "change" (not "input") on <select>, so listen to both.
 Object.values(REG_FILTERS).forEach((sel) => ["input", "change"].forEach((ev) => $(sel).addEventListener(ev, scheduleRegs)));
+$("#reg-in-text").addEventListener("change", scheduleRegs);
 $("#reg-reset").addEventListener("click", () => {
   Object.values(REG_FILTERS).forEach((sel) => { $(sel).value = ""; });
+  $("#reg-in-text").checked = false;
   loadRegs();
 });
 
@@ -242,6 +245,7 @@ function progress(done, total, na) {
 let regSeq = 0;
 async function loadRegs() {
   const filters = Object.fromEntries(Object.entries(REG_FILTERS).map(([k, sel]) => [k, $(sel).value]));
+  filters.in_text = $("#reg-in-text").checked ? "1" : "";
   try { localStorage.setItem("lcn.regFilters", JSON.stringify(filters)); } catch (_) { /* ignore */ }
   $("#reg-reset").hidden = !Object.values(filters).some(Boolean);
   const seq = ++regSeq;
@@ -253,7 +257,8 @@ async function loadRegs() {
       <td><input type="checkbox" data-sel="${r.id}" aria-label="Pilih"></td>
       <td><div class="cit">${esc(r.citation)}${r.pdf_url ? ` <a class="pdf-chip" href="${esc(r.pdf_url)}" target="_blank" rel="noopener" title="Buka PDF">PDF</a>`
         : r.url ? ` <a class="pdf-chip ghost" href="${esc(r.url)}" target="_blank" rel="noopener" title="Halaman peraturan">↗</a>` : ""}</div>
-        <div class="judul">${esc(r.judul)}</div></td>
+        <div class="judul">${esc(r.judul)}${r.has_text ? ` <span class="pdf-chip ghost" title="Teks peraturan tersedia untuk analisa">teks</span>` : ""}</div>
+        ${r.text_snippet ? `<div class="snippet">${esc(r.text_snippet)}</div>` : ""}</td>
       <td><select data-cat-of="${r.id}">${CATS.map((c) => `<option ${c === r.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></td>
       <td><span class="badge ${r.status_berlaku}">${r.status_berlaku}</span></td>
       <td>${relCtl(r)}</td>
@@ -363,12 +368,25 @@ async function openDrawer(id) {
         </details>
       </div>
     </div>
+    <div class="doclinks">
+      <h3>Analisa isi peraturan</h3>
+      <p class="muted" id="d-an-status">Memeriksa…</p>
+      <button id="d-analyse" class="secondary">Buka analisa isi</button>
+    </div>
     <div class="card-head"><h2>Aktivitas pemenuhan (${r.obligations.length})</h2><button id="d-add-obl" class="secondary">+ Kewajiban</button></div>
     <div id="d-obls">${r.obligations.map(oblForm).join("") || `<p class="muted">Belum ada kewajiban. ${
       r.relevance !== "relevan" ? "Tandai regulasi sebagai relevan untuk mulai melacak pemenuhan." : ""}</p>`}</div>`;
   $("#drawer").hidden = false;
   body.dataset.id = id;
   lock(body);
+  $("#d-analyse").disabled = false;  // reading the analysis is open to every role
+  api(`/api/regulations/${id}/analysis`).then((a) => {
+    const st = $("#d-an-status");
+    if (!st) return;
+    st.textContent = !a.text ? "Teks peraturan belum diambil. Buka analisa untuk mengambil dari PDF resmi atau mengunggahnya."
+      : a.text.scanned ? "PDF hasil scan — teksnya tidak terbaca."
+      : `${a.candidates.length} usulan persyaratan dari ${a.articles} pasal · ${a.candidates.filter((c) => c.added).length} sudah ditambahkan.`;
+  }).catch(() => {});
 }
 function oblForm(o) {
   return `<div class="obl" data-obl="${o.id}">
@@ -403,6 +421,7 @@ $("#drawer-body").addEventListener("click", async (e) => {
     } catch (err) { toast(err.message); }
     return openDrawer(id);
   }
+  if (e.target.id === "d-analyse") return openAnalysis(id);
   if (e.target.id === "d-add-obl") {
     await api(`/api/regulations/${id}/obligations`, { method: "POST", body: { description: "Kewajiban baru" } });
     return openDrawer(id);
@@ -587,6 +606,165 @@ $("#sources").addEventListener("change", async (e) => {
   await api(`/api/sources/${card.dataset.src}`, { method: "PATCH", body: { enabled: e.target.checked } });
   toast(e.target.checked ? "Sumber diaktifkan" : "Sumber dinonaktifkan");
 });
+
+/* ---------------------------------------------------------------- offline legal analysis */
+const AN_TYPES = { kewajiban: "Kewajiban", larangan: "Larangan", pelaporan: "Pelaporan", perizinan: "Perizinan / dokumen" };
+const ORIGIN = { pdf_url: "PDF resmi", upload: "file unggahan", paste: "teks tempelan" };
+const an = { id: null, data: null, types: new Set(Object.keys(AN_TYPES)), showGov: false, picked: new Map() };
+const dlgAn = $("#dlg-analysis");
+
+async function openAnalysis(id) {
+  an.id = id;
+  const r = await api(`/api/regulations/${id}`);
+  $("#an-title").textContent = "Analisa isi · " + r.citation;
+  $("#an-sub").textContent = r.judul;
+  an.reg = r;
+  if (!dlgAn.open) dlgAn.showModal();
+  await loadAnalysis();
+}
+async function loadAnalysis(data) {
+  an.data = data || await api(`/api/regulations/${an.id}/analysis`);
+  an.picked = new Map();
+  (an.data.candidates || []).forEach((c, i) => {
+    if (c.suggested && !c.added && canEdit()) an.picked.set(i, c.description);
+  });
+  renderAnalysis();
+}
+function sourceBar(a) {
+  const t = a.text;
+  const editBtns = `
+    ${an.reg.pdf_url ? `<button class="secondary editor-only" data-an="fetch">Ambil dari PDF resmi</button>` : ""}
+    <button class="secondary editor-only" data-an="upload">Unggah PDF / teks</button>
+    <button class="secondary editor-only" data-an="paste">Tempel teks</button>`;
+  return `<div class="an-source">
+    <div>${t ? `<b>Teks:</b> ${ORIGIN[t.origin] || t.origin}${t.filename ? ` (${esc(decodeURIComponent(t.filename))})` : ""}
+      · ${t.pages ? t.pages + " halaman · " : ""}${Math.round(t.chars / 1000)} rb karakter · ${fmtDate(t.fetched_at)}${t.fetched_by ? " oleh " + esc(t.fetched_by) : ""}`
+      : `<b>Teks peraturan belum diambil.</b> Ambil dari PDF resmi, atau unggah/tempel bila situs JDIH tidak dapat diakses.`}</div>
+    <div class="an-actions">${editBtns}
+      ${t ? `<button class="link" data-an="view">Lihat teks lengkap</button><button class="danger editor-only" data-an="delete">Hapus teks</button>` : ""}</div>
+    <div class="an-paste" hidden><textarea rows="8" placeholder="Tempel teks lengkap peraturan di sini (mis. hasil salin dari PDF)…"></textarea>
+      <div class="an-actions"><button data-an="paste-save">Simpan &amp; analisa</button><button class="secondary" data-an="paste-cancel">Batal</button></div></div>
+  </div>`;
+}
+function renderAnalysis() {
+  const a = an.data;
+  const body = $("#an-body");
+  let html = sourceBar(a);
+  if (a.text && a.text.scanned) {
+    html += `<p class="an-warn">⚠ PDF ini tampaknya hasil scan: hampir tidak ada teks yang bisa dibaca.
+      Gunakan PDF yang berisi teks, atau tempel teks hasil OCR.</p>`;
+  }
+  if (a.text) {
+    const list = a.candidates.map((c, i) => [c, i]).filter(([c]) => an.types.has(c.type) && (an.showGov || c.party !== "pemerintah"));
+    html += `<p class="an-note">ℹ Usulan dibuat otomatis dari pola bahasa peraturan (<i>wajib, dilarang, paling lambat,
+      dikenai sanksi</i> …). Periksa setiap usulan terhadap teks resmi sebelum ditambahkan; ini bukan nasihat hukum.</p>
+      <div class="an-filters">${Object.entries(AN_TYPES).map(([k, l]) =>
+        `<button class="chip" aria-pressed="${an.types.has(k)}" data-an-type="${k}">${l} <b>${a.counts[k] || 0}</b></button>`).join("")}
+        <label class="check"><input type="checkbox" id="an-gov" ${an.showGov ? "checked" : ""}> Tampilkan kewajiban pemerintah/instansi</label>
+        <span class="muted">${a.articles} pasal dibaca</span></div>
+      <div class="an-list">${list.map(([c, i]) => `
+        <div class="an-item ${c.added ? "added" : ""}" data-i="${i}">
+          <input type="checkbox" class="an-pick" aria-label="Pilih" ${an.picked.has(i) ? "checked" : ""} ${c.added || !canEdit() ? "disabled" : ""}>
+          <div class="an-main">
+            <div class="an-tags"><b>${esc(c.pasal)}</b>
+              <span class="tag t-${c.type}">${esc(c.type_label)}</span>
+              <span class="tag">${esc(c.party_label)}</span>
+              <span class="tag conf-${c.confidence}">keyakinan ${c.confidence}</span>
+              ${c.timing ? `<span class="tag">⏱ ${esc(c.timing)}</span>` : ""}
+              ${c.sanction.length ? `<span class="tag t-larangan">ada sanksi: ${esc(c.sanction.join(", "))}</span>` : ""}
+              ${c.added ? `<span class="tag t-ok">✓ sudah di kewajiban</span>` : ""}</div>
+            <input class="an-desc" value="${esc(an.picked.get(i) ?? c.description)}" ${c.added || !canEdit() ? "disabled" : ""} aria-label="Deskripsi kewajiban">
+            <details><summary>Kutipan pasal</summary><p class="quote">${esc(c.quote)}</p>
+              ${c.context ? `<p class="quote ctx"><b>${esc(c.article)} lengkap:</b> ${esc(c.context)}</p>` : ""}</details>
+          </div>
+        </div>`).join("") || `<p class="muted">Tidak ada usulan untuk filter ini.</p>`}</div>
+      ${a.sanctions.length ? `<details class="an-sanctions"><summary>Ketentuan sanksi (${a.sanctions.length})</summary>${a.sanctions.map((x) =>
+        `<p><b>${esc(x.pasal)}</b>${x.refers_to.length ? ` → ${esc(x.refers_to.join(", "))}` : ""}: ${esc(x.text)}</p>`).join("")}</details>` : ""}`;
+  }
+  body.innerHTML = html;
+  $("#an-foot").hidden = !a.text || !canEdit();
+  updateAnCount();
+  if (!canEdit()) body.querySelectorAll(".editor-only").forEach((el) => (el.hidden = true));
+}
+function updateAnCount() {
+  $("#an-count").textContent = `${an.picked.size} usulan dipilih`;
+  $("#an-apply").disabled = an.picked.size === 0;
+}
+async function anCall(btn, fn) {
+  const old = btn && btn.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = "Memproses…"; }
+  try { await loadAnalysis(await fn()); } catch (err) { toast(err.message); if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
+$("#an-body").addEventListener("click", async (e) => {
+  const act = e.target.dataset.an;
+  const type = e.target.closest("[data-an-type]");
+  if (type) {
+    const k = type.dataset.anType;
+    an.types.has(k) ? an.types.delete(k) : an.types.add(k);
+    return renderAnalysis();
+  }
+  if (!act) return;
+  const box = $(".an-paste", $("#an-body"));
+  if (act === "fetch") return anCall(e.target, () => api(`/api/regulations/${an.id}/text/fetch`, { method: "POST" }));
+  if (act === "upload") return $("#an-file").click();
+  if (act === "paste") { box.hidden = false; return $("textarea", box).focus(); }
+  if (act === "paste-cancel") { box.hidden = true; return; }
+  if (act === "paste-save") {
+    const text = $("textarea", box).value;
+    return anCall(e.target, () => api(`/api/regulations/${an.id}/text`, { method: "POST", body: { text } }));
+  }
+  if (act === "view") {
+    const t = await api(`/api/regulations/${an.id}/text`);
+    const w = window.open("", "_blank");
+    if (w) { w.document.title = an.reg.citation; const pre = w.document.createElement("pre");
+      pre.style.cssText = "white-space:pre-wrap;font:14px/1.5 system-ui;padding:24px;max-width:900px"; pre.textContent = t.content;
+      w.document.body.appendChild(pre); }
+    return;
+  }
+  if (act === "delete" && confirm("Hapus teks peraturan yang tersimpan? Kewajiban yang sudah ditambahkan tidak terhapus.")) {
+    await api(`/api/regulations/${an.id}/text`, { method: "DELETE" });
+    return loadAnalysis();
+  }
+});
+$("#an-body").addEventListener("change", (e) => {
+  if (e.target.id === "an-gov") { an.showGov = e.target.checked; return renderAnalysis(); }
+  const item = e.target.closest("[data-i]");
+  if (!item) return;
+  const i = +item.dataset.i;
+  if (e.target.classList.contains("an-pick")) {
+    e.target.checked ? an.picked.set(i, $(".an-desc", item).value) : an.picked.delete(i);
+    updateAnCount();
+  }
+});
+$("#an-body").addEventListener("input", (e) => {
+  const item = e.target.closest("[data-i]");
+  if (item && e.target.classList.contains("an-desc") && an.picked.has(+item.dataset.i)) an.picked.set(+item.dataset.i, e.target.value);
+});
+$("#an-file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  toast("Membaca file…");
+  await anCall(null, () => api(`/api/regulations/${an.id}/text/upload`, { method: "POST", body: fd }));
+  e.target.value = "";
+});
+$("#an-apply").addEventListener("click", async () => {
+  const items = [...an.picked.entries()].map(([i, description]) => {
+    const c = an.data.candidates[i];
+    const notes = [c.timing && `Waktu: ${c.timing}`, c.sanction.length && `Sanksi: ${c.sanction.join(", ")}`,
+      "Dari analisa isi otomatis"].filter(Boolean).join(" · ");
+    return { pasal: c.pasal, description, notes };
+  });
+  try {
+    const r = await api(`/api/regulations/${an.id}/analysis/apply`, { method: "POST", body: { items } });
+    toast(`${r.added} kewajiban ditambahkan${r.skipped ? `, ${r.skipped} dilewati (pasal sudah ada)` : ""}`);
+    await loadAnalysis();
+  } catch (err) { toast(err.message); }
+});
+function closeAnalysis() { dlgAn.close(); if (!$("#drawer").hidden && an.id) openDrawer(an.id); }
+$("#an-close").addEventListener("click", closeAnalysis);
+dlgAn.addEventListener("cancel", (e) => { e.preventDefault(); closeAnalysis(); });
 
 /* ---------------------------------------------------------------- add a sync source */
 const dlgSrc = $("#dlg-source");

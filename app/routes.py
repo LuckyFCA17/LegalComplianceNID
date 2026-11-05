@@ -6,13 +6,14 @@ import re
 from datetime import date
 from urllib.parse import quote_plus, urlparse
 
-from flask import Blueprint, Response, abort, current_app, jsonify, request, send_from_directory
+from flask import Blueprint, Response, abort, current_app, g, jsonify, request, send_from_directory
 
 from .connectors.base import make_record
 from .connectors.jdihn import parse_feed
 from .db import get_db, now
 from . import categories as catmod
-from .legal import citation, parse_search, search_score
+from . import analysis
+from .legal import citation, parse_search, search_score, search_tokens
 from .connectors import get_connector
 from .connectors.base import ConnectorError
 from .sync import SyncBusy, apply_suggestions, resolve_regulation, run_sync_job, upsert_regulation
@@ -404,8 +405,17 @@ def list_regulations():
     # Free-text search ("PP 50", "No. 5 Tahun 2018", "5/2018", "limbah") is matched per token below.
     search = parse_search(request.args.get("q", ""))
     searching = any(search.values())
+    # Optionally also look inside the stored text of regulations ("Cari juga di isi peraturan").
+    text_hits = {}
+    words = [w for w in search_tokens(request.args.get("q", "")) if len(w) >= 3]
+    if request.args.get("in_text") == "1" and words:
+        cond = " AND ".join("t.text LIKE ?" for _ in words)
+        for t in db.execute(f"SELECT regulation_id, text FROM regulation_texts t WHERE {cond}",
+                            [f"%{w}%" for w in words]).fetchall():
+            text_hits[t["regulation_id"]] = analysis.snippet(t["text"], words)
     rows = db.execute(
         f"""SELECT r.*, s.name AS source_name,
+               EXISTS(SELECT 1 FROM regulation_texts t WHERE t.regulation_id = r.id) AS has_text,
                COUNT(o.id) AS obl_total,
                SUM(o.status = 'terpenuhi') AS obl_done,
                SUM(o.status = 'tidak_berlaku') AS obl_na,
@@ -424,11 +434,12 @@ def list_regulations():
     for r in rows:
         if searching:
             score = search_score(r, search)
-            if score is None:
+            if score is None and r["id"] not in text_hits:
                 continue
-            scores[r["id"]] = score
+            scores[r["id"]] = score if score is not None else 0.5  # found only in the text: after title hits
         status, pct = compliance_of(r)
-        d = _reg_dict(r, {"compliance_status": status, "compliance_pct": pct, "obl_overdue": r["obl_overdue"] or 0})
+        d = _reg_dict(r, {"compliance_status": status, "compliance_pct": pct, "obl_overdue": r["obl_overdue"] or 0,
+                          "text_snippet": text_hits.get(r["id"])})
         if compliance == "terlambat" and not d["obl_overdue"]:
             continue
         if compliance in COMPLIANCE and status != compliance:
@@ -646,6 +657,137 @@ def update_obligation(oid):
                    (*data.values(), oid))
         db.commit()
     return jsonify(dict(db.execute("SELECT * FROM obligations WHERE id = ?", (oid,)).fetchone()))
+
+
+# ---------------------------------------------------------------- text & offline legal analysis
+def _text_meta(row):
+    if row is None:
+        return None
+    return {"origin": row["origin"], "filename": row["filename"], "pages": row["pages"],
+            "scanned": bool(row["scanned"]), "chars": len(row["text"]), "fetched_at": row["fetched_at"],
+            "fetched_by": row["fetched_by"]}
+
+
+def _store_text(rid, origin, text, pages=None, scanned=False, filename=None):
+    db = get_db()
+    if not scanned and len(text.strip()) < 50:
+        abort(400, "Teks terlalu pendek untuk dianalisa")
+    db.execute("INSERT OR REPLACE INTO regulation_texts (regulation_id, origin, filename, pages, scanned, text, "
+               "fetched_at, fetched_by) VALUES (?,?,?,?,?,?,?,?)",
+               (rid, origin, filename, pages, 1 if scanned else 0, text, now(), g.user["name"]))
+    db.commit()
+    return regulation_analysis(rid)
+
+
+@bp.post("/api/regulations/<int:rid>/text/fetch")
+def fetch_regulation_text(rid):
+    """Download the regulation's PDF from its official link and keep its text."""
+    row = _get_reg(rid)
+    if not row["pdf_url"]:
+        abort(400, "Peraturan ini belum punya tautan PDF. Cari dulu lewat “Cari halaman & PDF di JDIH”, "
+                   "atau unggah PDF-nya.")
+    db = get_db()
+    host = urlparse(row["pdf_url"]).netloc
+    src = next((s for s in db.execute("SELECT * FROM sources WHERE base_url IS NOT NULL").fetchall()
+                if urlparse(s["base_url"]).netloc == host), None)
+    conn = (get_connector(src["kind"], src["base_url"], json.loads(src["config"] or "{}")) if src
+            else get_connector("seed"))  # plain HTTP client with the same headers / SSL handling
+    try:
+        resp = conn.get(row["pdf_url"])
+    except ConnectorError as exc:
+        abort(400, f"PDF tidak dapat diunduh: {exc}. Anda bisa mengunggah PDF-nya secara manual.")
+    if not resp.content.startswith(b"%PDF"):
+        abort(400, "Tautan PDF tidak mengarah ke file PDF (mungkin halaman unduhan atau login). "
+                   "Unduh PDF-nya lewat browser lalu unggah di sini.")
+    try:
+        text, pages, scanned = analysis.extract_pdf(resp.content)
+    except analysis.AnalysisError as exc:
+        abort(400, str(exc))
+    return _store_text(rid, "pdf_url", text, pages, scanned, filename=row["pdf_url"].rsplit("/", 1)[-1])
+
+
+@bp.post("/api/regulations/<int:rid>/text/upload")
+def upload_regulation_text(rid):
+    """Upload the regulation as PDF or plain text (when the JDIH site cannot be reached)."""
+    _get_reg(rid)
+    f = request.files.get("file")
+    if not f or not f.filename:
+        abort(400, "File tidak ditemukan")
+    data = f.read()
+    name = f.filename.lower()
+    if name.endswith(".pdf") or data.startswith(b"%PDF"):
+        try:
+            text, pages, scanned = analysis.extract_pdf(data)
+        except analysis.AnalysisError as exc:
+            abort(400, str(exc))
+        return _store_text(rid, "upload", text, pages, scanned, filename=f.filename)
+    if name.endswith((".txt", ".md")):
+        return _store_text(rid, "upload", analysis.clean_text(data.decode("utf-8-sig", errors="replace")),
+                           filename=f.filename)
+    abort(400, "Unggah file PDF atau teks (.txt)")
+
+
+@bp.post("/api/regulations/<int:rid>/text")
+def paste_regulation_text(rid):
+    _get_reg(rid)
+    data = _json_body()
+    return _store_text(rid, "paste", analysis.clean_text(str(data.get("text") or "")))
+
+
+@bp.delete("/api/regulations/<int:rid>/text")
+def delete_regulation_text(rid):
+    db = get_db()
+    db.execute("DELETE FROM regulation_texts WHERE regulation_id = ?", (rid,))
+    db.commit()
+    return "", 204
+
+
+@bp.get("/api/regulations/<int:rid>/analysis")
+def regulation_analysis(rid):
+    """Offline, rule-based requirement candidates for review (not legal advice)."""
+    _get_reg(rid)
+    db = get_db()
+    row = db.execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    if row is None:
+        return jsonify(text=None)
+    result = analysis.analyze(row["text"])
+    existing = {(o["pasal"] or "").lower(): o["description"] for o in
+                db.execute("SELECT pasal, description FROM obligations WHERE regulation_id = ?", (rid,)).fetchall()}
+    for c in result["candidates"]:
+        c["added"] = c["pasal"].lower() in existing
+    return jsonify(text=_text_meta(row), **result)
+
+
+@bp.get("/api/regulations/<int:rid>/text")
+def regulation_text(rid):
+    _get_reg(rid)
+    row = get_db().execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    if row is None:
+        abort(404, "Teks belum tersedia")
+    return jsonify(text=_text_meta(row), content=row["text"])
+
+
+@bp.post("/api/regulations/<int:rid>/analysis/apply")
+def apply_analysis(rid):
+    """Add the reviewed candidates as obligations (one per pasal; already present ones are skipped)."""
+    _get_reg(rid)
+    db = get_db()
+    items = (_json_body().get("items") or [])[:200]
+    have = {(o["pasal"] or "").lower() for o in
+            db.execute("SELECT pasal FROM obligations WHERE regulation_id = ?", (rid,)).fetchall()}
+    added, ts = 0, now()
+    for it in items:
+        pasal = " ".join(str(it.get("pasal") or "").split())[:80]
+        desc = " ".join(str(it.get("description") or "").split())[:1000]
+        if not desc or pasal.lower() in have:
+            continue
+        notes = " ".join(str(it.get("notes") or "").split())[:500] or None
+        db.execute("INSERT INTO obligations (regulation_id, pasal, description, notes, status, created_at, updated_at) "
+                   "VALUES (?,?,?,?,?,?,?)", (rid, pasal, desc, notes, "belum", ts, ts))
+        have.add(pasal.lower())
+        added += 1
+    db.commit()
+    return jsonify(added=added, skipped=len(items) - added)
 
 
 @bp.delete("/api/obligations/<int:oid>")

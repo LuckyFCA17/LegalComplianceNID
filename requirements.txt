@@ -4,3 +4,4 @@ beautifulsoup4>=4.12
 pytest>=8.0
 gunicorn>=22.0
 waitress>=3.0
+pypdf>=4.0

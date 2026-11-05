@@ -158,6 +158,9 @@ def main(argv):
         ok = (client.get("/healthz").get_json() or {}).get("app") == APP_NAME
         ok = ok and b"Legal Compliance" in client.get("/login").data
         ok = ok and client.get("/static/app.js").status_code == 200
+        from pypdf import PdfReader  # noqa: F401  (bundled for the legal analysis)
+        from app.analysis import analyze
+        ok = ok and analyze("Pasal 5\n(1) Setiap perusahaan wajib menerapkan SMK3.")["candidates"] != []
         print(" Self-test:", "OK" if ok else "GAGAL")
         return 0 if ok else 1
 
