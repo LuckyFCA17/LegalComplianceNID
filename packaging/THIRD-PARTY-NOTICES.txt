@@ -1,0 +1,14 @@
+Komponen pihak ketiga yang disertakan dalam paket portable
+===========================================================
+
+Tesseract OCR (folder tesseract\)      Apache License 2.0  — https://github.com/tesseract-ocr/tesseract
+  Data bahasa (tessdata: ind, eng, osd) Apache License 2.0  — https://github.com/tesseract-ocr/tessdata
+  Teks lisensi lengkap: tesseract\LICENSE-Tesseract.txt
+PDFium via pypdfium2                    Apache 2.0 / BSD-3   — https://github.com/pypdfium2-team/pypdfium2
+pypdf                                   BSD-3-Clause         — https://github.com/py-pdf/pypdf
+Pillow                                  MIT-CMU (HPND)       — https://github.com/python-pillow/Pillow
+Flask, Werkzeug, Jinja2, Click          BSD-3-Clause         — https://palletsprojects.com
+Waitress                                ZPL 2.1              — https://github.com/Pylons/waitress
+Requests                                Apache License 2.0   — https://github.com/psf/requests
+Beautiful Soup                          MIT                  — https://www.crummy.com/software/BeautifulSoup/
+Python                                  PSF License          — https://www.python.org

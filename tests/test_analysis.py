@@ -114,7 +114,7 @@ def pp50(c):
 def test_upload_analyse_and_apply(app):
     c = login(app, "editor")
     rid = pp50(c)
-    assert c.get(f"/api/regulations/{rid}/analysis").get_json() == {"text": None}
+    assert c.get(f"/api/regulations/{rid}/analysis").get_json()["text"] is None
     r = c.post(f"/api/regulations/{rid}/text/upload",
                data={"file": (io.BytesIO(fixture_pdf()), "pp50.pdf")}, content_type="multipart/form-data")
     assert r.status_code == 200, r.get_json()
@@ -144,7 +144,7 @@ def test_paste_text_viewer_rights_and_delete(app):
     assert viewer.get(f"/api/regulations/{rid}/analysis").status_code == 200  # everyone may read
     assert "Pasal 5" in viewer.get(f"/api/regulations/{rid}/text").get_json()["content"]
     assert editor.delete(f"/api/regulations/{rid}/text").status_code == 204
-    assert editor.get(f"/api/regulations/{rid}/analysis").get_json() == {"text": None}
+    assert editor.get(f"/api/regulations/{rid}/analysis").get_json()["text"] is None
 
 
 def test_fetch_pdf_from_official_link(app, monkeypatch):

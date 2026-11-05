@@ -5,3 +5,5 @@ pytest>=8.0
 gunicorn>=22.0
 waitress>=3.0
 pypdf>=4.0
+pypdfium2>=4.0
+pillow>=10.1

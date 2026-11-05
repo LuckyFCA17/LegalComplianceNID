@@ -106,6 +106,18 @@ CREATE TABLE IF NOT EXISTS regulation_texts (
     fetched_by    TEXT
 );
 
+-- Background OCR jobs (visible to every computer using the database).
+CREATE TABLE IF NOT EXISTS ocr_jobs (
+    regulation_id INTEGER PRIMARY KEY REFERENCES regulations(id) ON DELETE CASCADE,
+    status        TEXT NOT NULL,            -- running | cancelling | done | error | cancelled
+    done_pages    INTEGER NOT NULL DEFAULT 0,
+    total_pages   INTEGER NOT NULL DEFAULT 0,
+    holder        TEXT,
+    started_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    message       TEXT
+);
+
 -- Cross-process locks (e.g. only one computer may run a sync on a shared database).
 CREATE TABLE IF NOT EXISTS locks (
     name        TEXT PRIMARY KEY,
@@ -153,6 +165,12 @@ MIGRATIONS = [
     # (table, column, DDL) — columns added after the first release
     ("regulations", "pdf_url", "ALTER TABLE regulations ADD COLUMN pdf_url TEXT"),
     ("regulations", "detail_checked_at", "ALTER TABLE regulations ADD COLUMN detail_checked_at TEXT"),
+    # OCR of scanned PDFs
+    ("regulation_texts", "needs_ocr", "ALTER TABLE regulation_texts ADD COLUMN needs_ocr INTEGER NOT NULL DEFAULT 0"),
+    ("regulation_texts", "ocr_pages", "ALTER TABLE regulation_texts ADD COLUMN ocr_pages INTEGER NOT NULL DEFAULT 0"),
+    ("regulation_texts", "ocr_low_pages", "ALTER TABLE regulation_texts ADD COLUMN ocr_low_pages TEXT"),
+    ("regulation_texts", "pdf_file", "ALTER TABLE regulation_texts ADD COLUMN pdf_file TEXT"),
+    ("regulation_texts", "edited", "ALTER TABLE regulation_texts ADD COLUMN edited INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

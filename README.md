@@ -157,6 +157,18 @@ berfungsi di versi portable.
 4. **Tambahkan ke kewajiban**: usulan yang dicentang (deskripsi bisa diedit) menjadi kewajiban dengan pasal,
    catatan waktu & sanksi; pasal yang sudah ada tidak digandakan.
 
+**PDF hasil scan → OCR (offline).** Jika PDF tidak punya lapisan teks (seluruhnya atau sebagian halaman),
+layar analisa menawarkan **Jalankan OCR**. Halaman dirender dengan PDFium (pypdfium2) lalu dibaca Tesseract
+dengan data bahasa Indonesia; hanya halaman tanpa teks yang di-OCR. Prosesnya berjalan di latar belakang dengan
+progres dan tombol batal; statusnya tersimpan di database sehingga komputer lain (versi portable) melihatnya dan
+tidak menjalankan OCR ganda. Hasilnya disimpan untuk semua pengguna, nomor pasal yang salah baca diperbaiki
+otomatis (`PasaI 1O` → `Pasal 10`, `(l)` → `(1)`), halaman dengan keyakinan rendah ditandai, dan teks bisa
+diperbaiki lewat **Sunting teks** sebelum dianalisa. PDF aslinya disimpan di folder `pdf/` di samping database.
+
+Tesseract dicari di: `LCN_TESSERACT`, folder `tesseract\` di samping program (sudah disertakan di paket
+portable Windows), `PATH`, lalu `C:\Program Files\Tesseract-OCR`. Versi lain: `apt install tesseract-ocr
+tesseract-ocr-ind` (Linux/Docker) atau `pkg install tesseract` (Termux).
+
 Centang **Cari juga di isi peraturan** di tab Regulasi untuk mencari kata di teks yang sudah diambil.
 Hasil analisa adalah usulan otomatis untuk diperiksa manusia, bukan nasihat hukum.
 

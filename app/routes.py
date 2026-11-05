@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import os
 import re
 from datetime import date
 from urllib.parse import quote_plus, urlparse
@@ -12,7 +13,7 @@ from .connectors.base import make_record
 from .connectors.jdihn import parse_feed
 from .db import get_db, now
 from . import categories as catmod
-from . import analysis
+from . import analysis, ocr, ocr_jobs
 from .legal import citation, parse_search, search_score, search_tokens
 from .connectors import get_connector
 from .connectors.base import ConnectorError
@@ -665,18 +666,34 @@ def _text_meta(row):
         return None
     return {"origin": row["origin"], "filename": row["filename"], "pages": row["pages"],
             "scanned": bool(row["scanned"]), "chars": len(row["text"]), "fetched_at": row["fetched_at"],
-            "fetched_by": row["fetched_by"]}
+            "fetched_by": row["fetched_by"], "needs_ocr": row["needs_ocr"], "ocr_pages": row["ocr_pages"],
+            "ocr_low_pages": json.loads(row["ocr_low_pages"] or "[]"), "has_pdf": bool(row["pdf_file"]),
+            "edited": bool(row["edited"])}
 
 
-def _store_text(rid, origin, text, pages=None, scanned=False, filename=None):
+def _store_text(rid, origin, text, pages=None, scanned=False, filename=None, pdf=None, empty_pages=()):
+    """Keep a regulation's text; a PDF with image-only pages is also kept so OCR can read them later."""
     db = get_db()
-    if not scanned and len(text.strip()) < 50:
+    if not scanned and not empty_pages and len(text.strip()) < 50:
         abort(400, "Teks terlalu pendek untuk dianalisa")
+    pdf_file = ocr_jobs.save_pdf(current_app.config["DATABASE"], rid, pdf) if pdf and empty_pages else None
     db.execute("INSERT OR REPLACE INTO regulation_texts (regulation_id, origin, filename, pages, scanned, text, "
-               "fetched_at, fetched_by) VALUES (?,?,?,?,?,?,?,?)",
-               (rid, origin, filename, pages, 1 if scanned else 0, text, now(), g.user["name"]))
+               "fetched_at, fetched_by, needs_ocr, ocr_pages, ocr_low_pages, pdf_file, edited) "
+               "VALUES (?,?,?,?,?,?,?,?,?,0,NULL,?,0)",
+               (rid, origin, filename, pages, 1 if scanned else 0, text, now(), g.user["name"],
+                len(empty_pages), pdf_file))
+    db.execute("DELETE FROM ocr_jobs WHERE regulation_id = ?", (rid,))
     db.commit()
     return regulation_analysis(rid)
+
+
+def _store_pdf(rid, origin, data, filename):
+    try:
+        info = analysis.inspect_pdf(data)
+    except analysis.AnalysisError as exc:
+        abort(400, str(exc))
+    return _store_text(rid, origin, info["text"], info["pages"], info["scanned"], filename=filename,
+                       pdf=data, empty_pages=info["empty_pages"])
 
 
 @bp.post("/api/regulations/<int:rid>/text/fetch")
@@ -699,11 +716,7 @@ def fetch_regulation_text(rid):
     if not resp.content.startswith(b"%PDF"):
         abort(400, "Tautan PDF tidak mengarah ke file PDF (mungkin halaman unduhan atau login). "
                    "Unduh PDF-nya lewat browser lalu unggah di sini.")
-    try:
-        text, pages, scanned = analysis.extract_pdf(resp.content)
-    except analysis.AnalysisError as exc:
-        abort(400, str(exc))
-    return _store_text(rid, "pdf_url", text, pages, scanned, filename=row["pdf_url"].rsplit("/", 1)[-1])
+    return _store_pdf(rid, "pdf_url", resp.content, row["pdf_url"].rsplit("/", 1)[-1])
 
 
 @bp.post("/api/regulations/<int:rid>/text/upload")
@@ -716,11 +729,7 @@ def upload_regulation_text(rid):
     data = f.read()
     name = f.filename.lower()
     if name.endswith(".pdf") or data.startswith(b"%PDF"):
-        try:
-            text, pages, scanned = analysis.extract_pdf(data)
-        except analysis.AnalysisError as exc:
-            abort(400, str(exc))
-        return _store_text(rid, "upload", text, pages, scanned, filename=f.filename)
+        return _store_pdf(rid, "upload", data, f.filename)
     if name.endswith((".txt", ".md")):
         return _store_text(rid, "upload", analysis.clean_text(data.decode("utf-8-sig", errors="replace")),
                            filename=f.filename)
@@ -734,12 +743,67 @@ def paste_regulation_text(rid):
     return _store_text(rid, "paste", analysis.clean_text(str(data.get("text") or "")))
 
 
+@bp.patch("/api/regulations/<int:rid>/text")
+def edit_regulation_text(rid):
+    """Correct the stored text by hand (typically after OCR), then analyse again."""
+    _get_reg(rid)
+    db = get_db()
+    if not db.execute("SELECT 1 FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone():
+        abort(404, "Teks belum tersedia")
+    text = analysis.clean_text(str(_json_body().get("text") or ""))
+    if len(text.strip()) < 50:
+        abort(400, "Teks terlalu pendek untuk dianalisa")
+    db.execute("UPDATE regulation_texts SET text = ?, edited = 1, fetched_at = ?, fetched_by = ? "
+               "WHERE regulation_id = ?", (text, now(), g.user["name"], rid))
+    db.commit()
+    return regulation_analysis(rid)
+
+
 @bp.delete("/api/regulations/<int:rid>/text")
 def delete_regulation_text(rid):
     db = get_db()
+    row = db.execute("SELECT pdf_file FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    if row and row["pdf_file"]:
+        try:
+            os.remove(os.path.join(ocr_jobs.pdf_dir(current_app.config["DATABASE"]), row["pdf_file"]))
+        except OSError:
+            pass
     db.execute("DELETE FROM regulation_texts WHERE regulation_id = ?", (rid,))
+    db.execute("DELETE FROM ocr_jobs WHERE regulation_id = ?", (rid,))
     db.commit()
     return "", 204
+
+
+# ---------------------------------------------------------------- OCR (offline, Tesseract)
+@bp.get("/api/ocr/status")
+def ocr_status():
+    st = ocr.status()
+    return jsonify(available=st["available"], lang=st["lang"], message=st["message"])
+
+
+@bp.get("/api/regulations/<int:rid>/ocr")
+def ocr_job_status(rid):
+    _get_reg(rid)
+    return jsonify(job=ocr_jobs.job(get_db(), rid))
+
+
+@bp.post("/api/regulations/<int:rid>/ocr")
+def start_ocr(rid):
+    _get_reg(rid)
+    try:
+        ocr_jobs.start(get_db(), current_app.config["DATABASE"], rid, g.user["name"])
+    except ocr_jobs.OcrBusy as exc:
+        return jsonify(error=str(exc)), 409
+    except ValueError as exc:
+        abort(400, str(exc))
+    return jsonify(job=ocr_jobs.job(get_db(), rid)), 202
+
+
+@bp.post("/api/regulations/<int:rid>/ocr/cancel")
+def cancel_ocr(rid):
+    _get_reg(rid)
+    ocr_jobs.cancel(get_db(), rid)
+    return jsonify(job=ocr_jobs.job(get_db(), rid))
 
 
 @bp.get("/api/regulations/<int:rid>/analysis")
@@ -749,13 +813,13 @@ def regulation_analysis(rid):
     db = get_db()
     row = db.execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
     if row is None:
-        return jsonify(text=None)
+        return jsonify(text=None, ocr_job=ocr_jobs.job(db, rid))
     result = analysis.analyze(row["text"])
     existing = {(o["pasal"] or "").lower(): o["description"] for o in
                 db.execute("SELECT pasal, description FROM obligations WHERE regulation_id = ?", (rid,)).fetchall()}
     for c in result["candidates"]:
         c["added"] = c["pasal"].lower() in existing
-    return jsonify(text=_text_meta(row), **result)
+    return jsonify(text=_text_meta(row), ocr_job=ocr_jobs.job(db, rid), **result)
 
 
 @bp.get("/api/regulations/<int:rid>/text")

@@ -32,15 +32,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
+      - name: Install Tesseract OCR + Indonesian language data
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $t = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path "$t\tesseract.exe")) { throw "tesseract.exe not found in $t" }
+          Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata/raw/main/ind.traineddata" -OutFile "$t\tessdata\ind.traineddata"
+          & "$t\tesseract.exe" --version
+          & "$t\tesseract.exe" --list-langs
+
       - name: Run tests
         run: python -m pytest -q
 
       - name: Build
         run: pyinstaller packaging/LegalCompliance.spec --noconfirm
 
+      - name: Bundle Tesseract into the package
+        shell: pwsh
+        run: |
+          $t = "C:\Program Files\Tesseract-OCR"
+          $dst = "dist\LegalCompliance\tesseract"
+          New-Item -ItemType Directory -Force "$dst\tessdata" | Out-Null
+          Copy-Item "$t\tesseract.exe", "$t\*.dll" $dst
+          Copy-Item "$t\tessdata\eng.traineddata", "$t\tessdata\ind.traineddata", "$t\tessdata\osd.traineddata" "$dst\tessdata"
+          Copy-Item "$t\tessdata\configs" "$dst\tessdata\configs" -Recurse
+          Invoke-WebRequest "https://raw.githubusercontent.com/tesseract-ocr/tesseract/main/LICENSE" -OutFile "$dst\LICENSE-Tesseract.txt"
+          "Bundled Tesseract size (MB): " + [math]::Round(((Get-ChildItem $dst -Recurse | Measure-Object Length -Sum).Sum / 1MB), 1)
+
       - name: Self-test the built program
         shell: pwsh
         run: |
+          $env:LCN_REQUIRE_OCR = "1"
           $env:LCN_DATA_DIR = "$env:RUNNER_TEMP\lcn-data"
           .\dist\LegalCompliance\LegalCompliance.exe --check
           if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
@@ -48,7 +71,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Copy-Item packaging\BACA-SAYA.txt, packaging\data-location.contoh.txt dist\LegalCompliance\
+          Copy-Item packaging\BACA-SAYA.txt, packaging\data-location.contoh.txt, packaging\THIRD-PARTY-NOTICES.txt dist\LegalCompliance\
           Compress-Archive -Path dist\LegalCompliance -DestinationPath LegalComplianceNID-portable-windows.zip
 
       - uses: actions/upload-artifact@v4

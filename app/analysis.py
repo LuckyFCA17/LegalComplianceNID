@@ -24,23 +24,38 @@ _HEADING = re.compile(r"^(pasal\s+\d+[a-z]?|bab\s+[ivxlcdm]+\b.*|bagian\s+\w+.*|
 _BLOCK_START = re.compile(r"^(\(\d+[a-z]?\)|[a-z]\.\s|\d+\.\s)")
 
 
-def extract_pdf(data):
-    """Text of a PDF. Returns (text, pages, scanned) — scanned=True when there is (almost) no text layer."""
+EMPTY_PAGE_CHARS = 80  # a page with less text than this is treated as an image (needs OCR)
+
+
+def page_texts(data):
+    """Raw text layer of every page of a PDF."""
     if len(data) > MAX_PDF_BYTES:
         raise AnalysisError("File PDF terlalu besar (maks. 40 MB)")
     if not data.startswith(b"%PDF"):
         raise AnalysisError("File ini bukan PDF")
     try:
         from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(data))
-        pages = [(p.extract_text() or "") for p in reader.pages]
-    except AnalysisError:
-        raise
+        return [(p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages]
     except Exception as exc:  # broken or encrypted PDFs
         raise AnalysisError(f"PDF tidak dapat dibaca: {exc}") from exc
+
+
+def inspect_pdf(data):
+    """{text, pages, scanned, empty_pages}: empty_pages = indexes of pages without a usable text layer."""
+    pages = page_texts(data)
     raw = "\n".join(pages)
-    scanned = len(raw.strip()) < SCANNED_CHARS_PER_PAGE * max(1, len(pages))
-    return clean_text(raw), len(pages), scanned
+    return {
+        "text": clean_text(raw),
+        "pages": len(pages),
+        "scanned": len(raw.strip()) < SCANNED_CHARS_PER_PAGE * max(1, len(pages)),
+        "empty_pages": [i for i, t in enumerate(pages) if len(t.strip()) < EMPTY_PAGE_CHARS],
+    }
+
+
+def extract_pdf(data):
+    """Text of a PDF. Returns (text, pages, scanned) — scanned=True when there is (almost) no text layer."""
+    info = inspect_pdf(data)
+    return info["text"], info["pages"], info["scanned"]
 
 
 def clean_text(raw):

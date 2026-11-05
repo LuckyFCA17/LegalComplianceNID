@@ -384,7 +384,8 @@ async function openDrawer(id) {
     const st = $("#d-an-status");
     if (!st) return;
     st.textContent = !a.text ? "Teks peraturan belum diambil. Buka analisa untuk mengambil dari PDF resmi atau mengunggahnya."
-      : a.text.scanned ? "PDF hasil scan — teksnya tidak terbaca."
+      : a.ocr_job && a.ocr_job.active ? `OCR berjalan: halaman ${a.ocr_job.done_pages} dari ${a.ocr_job.total_pages || "…"}.`
+      : a.text.needs_ocr ? `PDF hasil scan — ${a.text.needs_ocr} halaman perlu OCR. Buka analisa untuk menjalankannya.`
       : `${a.candidates.length} usulan persyaratan dari ${a.articles} pasal · ${a.candidates.filter((c) => c.added).length} sudah ditambahkan.`;
   }).catch(() => {});
 }
@@ -609,7 +610,7 @@ $("#sources").addEventListener("change", async (e) => {
 
 /* ---------------------------------------------------------------- offline legal analysis */
 const AN_TYPES = { kewajiban: "Kewajiban", larangan: "Larangan", pelaporan: "Pelaporan", perizinan: "Perizinan / dokumen" };
-const ORIGIN = { pdf_url: "PDF resmi", upload: "file unggahan", paste: "teks tempelan" };
+const ORIGIN = { pdf_url: "PDF resmi", upload: "file unggahan", paste: "teks tempelan", ocr: "OCR dari PDF scan" };
 const an = { id: null, data: null, types: new Set(Object.keys(AN_TYPES)), showGov: false, picked: new Map() };
 const dlgAn = $("#dlg-analysis");
 
@@ -619,8 +620,55 @@ async function openAnalysis(id) {
   $("#an-title").textContent = "Analisa isi · " + r.citation;
   $("#an-sub").textContent = r.judul;
   an.reg = r;
+  if (!an.ocr) an.ocr = await api("/api/ocr/status").catch(() => ({ available: false, message: "" }));
   if (!dlgAn.open) dlgAn.showModal();
   await loadAnalysis();
+}
+let ocrPoll = null;
+function watchOcr() {
+  clearTimeout(ocrPoll);
+  const job = an.data && an.data.ocr_job;
+  if (!job || !job.active || !dlgAn.open) return;
+  ocrPoll = setTimeout(async () => {
+    try {
+      const r = await api(`/api/regulations/${an.id}/ocr`);
+      if (r.job && r.job.active) {
+        an.data.ocr_job = r.job;
+        const bar = $("#an-body .ocr-progress");
+        if (bar) bar.outerHTML = ocrBox(an.data.text, r.job);
+        return watchOcr();
+      }
+      await loadAnalysis();  // finished: show the OCR text's analysis
+      if (r.job) toast(r.job.message || "OCR selesai");
+    } catch (_) { watchOcr(); }
+  }, 1500);
+}
+function ocrBox(t, job) {
+  if (job && job.active) {
+    const pct = job.total_pages ? Math.round((100 * job.done_pages) / job.total_pages) : 0;
+    return `<div class="ocr-progress"><b>OCR berjalan</b> · halaman ${job.done_pages} dari ${job.total_pages || "…"}
+      · oleh ${esc(job.holder || "")}${job.status === "cancelling" ? " · membatalkan…" : ""}
+      <div class="meter"><span style="width:${pct}%"></span></div>
+      <p class="muted">Aplikasi tetap bisa dipakai; hasilnya tersimpan untuk semua komputer.</p>
+      <button class="secondary editor-only" data-an="ocr-cancel">Batalkan OCR</button></div>`;
+  }
+  let html = "";
+  if (job && ["error", "cancelled"].includes(job.status)) html += `<p class="an-warn">⚠ ${esc(job.message)}</p>`;
+  if (t && t.needs_ocr) {
+    html += `<div class="ocr-need"><b>⚠ ${t.scanned ? "PDF hasil scan" : `${t.needs_ocr} halaman berupa gambar`}</b> —
+      ${t.needs_ocr} dari ${t.pages} halaman tidak punya lapisan teks, jadi belum bisa dianalisa.
+      ${an.ocr && an.ocr.available
+        ? `<div class="an-actions"><button class="editor-only" data-an="ocr-start">Jalankan OCR (${t.needs_ocr} halaman)</button>
+           <span class="muted">Perkiraan 2–6 detik per halaman, offline.</span></div>`
+        : `<p class="muted">${esc((an.ocr && an.ocr.message) || "OCR tidak tersedia di komputer ini.")} Sebagai alternatif, tempel teks hasil OCR.</p>`}
+      ${an.ocr && an.ocr.message && an.ocr.available ? `<p class="muted">${esc(an.ocr.message)}</p>` : ""}</div>`;
+  }
+  if (t && t.origin === "ocr") {
+    html += `<p class="an-note">ℹ Teks ini hasil OCR (${t.ocr_pages} halaman)${t.edited ? " dan sudah disunting" : ""}.
+      ${t.ocr_low_pages.length ? `<b>Periksa halaman ${t.ocr_low_pages.join(", ")}</b> — keyakinan OCR rendah. ` : ""}
+      Bila nomor pasal atau kata penting salah baca, perbaiki lewat <b>Sunting teks</b>.</p>`;
+  }
+  return html;
 }
 async function loadAnalysis(data) {
   an.data = data || await api(`/api/regulations/${an.id}/analysis`);
@@ -641,20 +689,21 @@ function sourceBar(a) {
       · ${t.pages ? t.pages + " halaman · " : ""}${Math.round(t.chars / 1000)} rb karakter · ${fmtDate(t.fetched_at)}${t.fetched_by ? " oleh " + esc(t.fetched_by) : ""}`
       : `<b>Teks peraturan belum diambil.</b> Ambil dari PDF resmi, atau unggah/tempel bila situs JDIH tidak dapat diakses.`}</div>
     <div class="an-actions">${editBtns}
-      ${t ? `<button class="link" data-an="view">Lihat teks lengkap</button><button class="danger editor-only" data-an="delete">Hapus teks</button>` : ""}</div>
+      ${t ? `<button class="link" data-an="view">Lihat teks lengkap</button>
+        <button class="secondary editor-only" data-an="edit">Sunting teks</button>
+        <button class="danger editor-only" data-an="delete">Hapus teks</button>` : ""}</div>
     <div class="an-paste" hidden><textarea rows="8" placeholder="Tempel teks lengkap peraturan di sini (mis. hasil salin dari PDF)…"></textarea>
       <div class="an-actions"><button data-an="paste-save">Simpan &amp; analisa</button><button class="secondary" data-an="paste-cancel">Batal</button></div></div>
-  </div>`;
+    <div class="an-edit" hidden><p class="muted">Perbaiki teks (mis. salah baca OCR). Pertahankan baris “Pasal N” dan penanda ayat “(1)” di awal baris.</p>
+      <textarea rows="16"></textarea>
+      <div class="an-actions"><button data-an="edit-save">Simpan &amp; analisa ulang</button><button class="secondary" data-an="edit-cancel">Batal</button></div></div>
+  </div>${ocrBox(t, a.ocr_job)}`;
 }
 function renderAnalysis() {
   const a = an.data;
   const body = $("#an-body");
   let html = sourceBar(a);
-  if (a.text && a.text.scanned) {
-    html += `<p class="an-warn">⚠ PDF ini tampaknya hasil scan: hampir tidak ada teks yang bisa dibaca.
-      Gunakan PDF yang berisi teks, atau tempel teks hasil OCR.</p>`;
-  }
-  if (a.text) {
+  if (a.text && !(a.text.scanned && a.text.needs_ocr)) {
     const list = a.candidates.map((c, i) => [c, i]).filter(([c]) => an.types.has(c.type) && (an.showGov || c.party !== "pemerintah"));
     html += `<p class="an-note">ℹ Usulan dibuat otomatis dari pola bahasa peraturan (<i>wajib, dilarang, paling lambat,
       dikenai sanksi</i> …). Periksa setiap usulan terhadap teks resmi sebelum ditambahkan; ini bukan nasihat hukum.</p>
@@ -682,9 +731,10 @@ function renderAnalysis() {
         `<p><b>${esc(x.pasal)}</b>${x.refers_to.length ? ` → ${esc(x.refers_to.join(", "))}` : ""}: ${esc(x.text)}</p>`).join("")}</details>` : ""}`;
   }
   body.innerHTML = html;
-  $("#an-foot").hidden = !a.text || !canEdit();
+  $("#an-foot").hidden = !a.text || !canEdit() || (a.text.scanned && a.text.needs_ocr);
   updateAnCount();
   if (!canEdit()) body.querySelectorAll(".editor-only").forEach((el) => (el.hidden = true));
+  watchOcr();
 }
 function updateAnCount() {
   $("#an-count").textContent = `${an.picked.size} usulan dipilih`;
@@ -709,6 +759,32 @@ $("#an-body").addEventListener("click", async (e) => {
   if (act === "upload") return $("#an-file").click();
   if (act === "paste") { box.hidden = false; return $("textarea", box).focus(); }
   if (act === "paste-cancel") { box.hidden = true; return; }
+  if (act === "ocr-start") {
+    e.target.disabled = true;
+    try {
+      const r = await api(`/api/regulations/${an.id}/ocr`, { method: "POST" });
+      an.data.ocr_job = r.job;
+      renderAnalysis();
+    } catch (err) { toast(err.message); e.target.disabled = false; }
+    return;
+  }
+  if (act === "ocr-cancel") {
+    const r = await api(`/api/regulations/${an.id}/ocr/cancel`, { method: "POST" });
+    an.data.ocr_job = r.job;
+    return renderAnalysis();
+  }
+  const edit = $(".an-edit", $("#an-body"));
+  if (act === "edit") {
+    const t = await api(`/api/regulations/${an.id}/text`);
+    $("textarea", edit).value = t.content;
+    edit.hidden = false;
+    return $("textarea", edit).focus();
+  }
+  if (act === "edit-cancel") { edit.hidden = true; return; }
+  if (act === "edit-save") {
+    const text = $("textarea", edit).value;
+    return anCall(e.target, () => api(`/api/regulations/${an.id}/text`, { method: "PATCH", body: { text } }));
+  }
   if (act === "paste-save") {
     const text = $("textarea", box).value;
     return anCall(e.target, () => api(`/api/regulations/${an.id}/text`, { method: "POST", body: { text } }));
@@ -762,7 +838,7 @@ $("#an-apply").addEventListener("click", async () => {
     await loadAnalysis();
   } catch (err) { toast(err.message); }
 });
-function closeAnalysis() { dlgAn.close(); if (!$("#drawer").hidden && an.id) openDrawer(an.id); }
+function closeAnalysis() { clearTimeout(ocrPoll); dlgAn.close(); if (!$("#drawer").hidden && an.id) openDrawer(an.id); }
 $("#an-close").addEventListener("click", closeAnalysis);
 dlgAn.addEventListener("cancel", (e) => { e.preventDefault(); closeAnalysis(); });
 

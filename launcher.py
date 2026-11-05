@@ -117,6 +117,32 @@ def check_integrity(db_path):
     return False
 
 
+def _check_ocr():
+    """OCR a rendered test line. Required when LCN_REQUIRE_OCR=1 (the build pipeline), optional otherwise."""
+    import tempfile
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    import pypdfium2  # noqa: F401  (bundled to render scanned PDF pages)
+    from app import ocr
+
+    st = ocr.status(refresh=True)
+    required = os.environ.get("LCN_REQUIRE_OCR") == "1"
+    if not st["available"]:
+        print(" OCR       :", "TIDAK TERSEDIA —", st["message"])
+        return not required
+    img = Image.new("L", (1800, 220), 255)
+    ImageDraw.Draw(img).text((40, 60), "Setiap perusahaan wajib menerapkan SMK3", fill=0,
+                             font=ImageFont.load_default(size=64))
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "uji.png")
+        img.save(path)
+        text, conf = ocr.ocr_image(st["path"], st["lang"], path)
+    good = "wajib" in text.lower()
+    print(f" OCR       : {'OK' if good else 'GAGAL'} ({st['lang']}, keyakinan {conf or 0:.0f}) — {st['path']}")
+    return good or not required
+
+
 def main(argv):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -161,6 +187,7 @@ def main(argv):
         from pypdf import PdfReader  # noqa: F401  (bundled for the legal analysis)
         from app.analysis import analyze
         ok = ok and analyze("Pasal 5\n(1) Setiap perusahaan wajib menerapkan SMK3.")["candidates"] != []
+        ok = ok and _check_ocr()
         print(" Self-test:", "OK" if ok else "GAGAL")
         return 0 if ok else 1
 

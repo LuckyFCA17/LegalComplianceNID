@@ -92,7 +92,11 @@ Folder "data" (database, backup) dibuat otomatis saat program pertama kali dibuk
     pelaporan dan perizinan, lengkap dengan pihak, tenggat dan sanksi.
   - Periksa usulan, ubah deskripsinya bila perlu, centang, lalu tekan
     "Tambahkan ke kewajiban". Hasil otomatis — bukan nasihat hukum.
-  - PDF hasil scan (tanpa teks) tidak bisa dibaca; tempel teks hasil OCR.
+  - PDF hasil scan: tekan "Jalankan OCR". OCR berjalan offline (Tesseract,
+    sudah disertakan di folder tesseract\), sekitar 2–6 detik per halaman.
+    Biarkan jendela hitam terbuka sampai selesai. Hasilnya tersimpan untuk
+    semua komputer. Periksa halaman yang ditandai "keyakinan rendah" dan
+    perbaiki salah baca lewat "Sunting teks".
   - Centang "Cari juga di isi peraturan" di tab Regulasi untuk mencari kata
     di dalam teks peraturan yang sudah diambil.
 
