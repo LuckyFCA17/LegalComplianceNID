@@ -59,6 +59,8 @@ class Connector:
         self._last = 0.0
         self._warmed = False
         self._insecure = False
+        # {category: [search terms]} from the app's category settings; None = built-in defaults.
+        self.category_keywords = None
 
     def _warm_up(self):
         """Visit the home page once so session cookies (anti-bot / CSRF) are set like in a browser."""
@@ -88,10 +90,11 @@ class Connector:
         explicit = self.config.get("keywords")
         if explicit:
             return list(explicit)
-        cats = categories or list(DEFAULT_KEYWORDS)
+        mapping = self.category_keywords if self.category_keywords is not None else DEFAULT_KEYWORDS
+        cats = categories or list(mapping)
         out = []
         for c in cats:
-            out.extend(DEFAULT_KEYWORDS.get(c, []))
+            out.extend(mapping.get(c, []))
         # The same term may serve several categories; search it once.
         return list({kw.lower(): kw for kw in out}.values())
 

@@ -135,6 +135,32 @@ Pasang di belakang HTTPS (reverse proxy) dan set `LCN_SECURE_COOKIES=1` + `LCN_B
 **Backup:** salin file database (`/var/data/compliance.db`) secara berkala, misalnya lewat *Shell* di dashboard Render:
 `sqlite3 /var/data/compliance.db ".backup /var/data/backup.db"`.
 
+## Kustomisasi (admin)
+**Kategori & kata kunci — tab *Pengaturan*.** Kategori bawaan K3, Lingkungan, Ketenagakerjaan dan Lainnya
+bisa diubah, dan kategori baru bisa ditambah (maks. 20). Setiap kategori punya dua daftar:
+
+| Daftar | Dipakai untuk |
+|---|---|
+| Kata kunci pencarian | dikirim ke situs JDIH saat sinkronisasi kategori itu |
+| Kata kunci pengenal judul | menentukan kategori sebuah peraturan dari judulnya (frasa multi-kata bernilai lebih) |
+
+Mengganti nama kategori ikut memindahkan peraturannya; menghapus kategori memindahkan peraturannya ke
+"Lainnya" (penilaian relevansi dan kewajiban tetap). Setelah mengubah kata kunci pengenal judul, gunakan
+**Pratinjau perubahan → Terapkan** untuk mengelompokkan ulang peraturan yang tersimpan; peraturan yang
+kategorinya dipilih manual tidak dipindah.
+
+**Sumber sinkronisasi tambahan — tab *Sumber Data* → *+ Tambah sumber*.**
+
+| Jenis | Isian |
+|---|---|
+| Situs JDIH (halaman pencarian) | URL dasar; URL pencarian dengan `{q}` (kata kunci) dan `{page}` (halaman), boleh `{base}`; pola regex alamat halaman peraturan; opsional pola PDF dan jumlah halaman |
+| Feed JSON JDIHN | URL feed integrasi JDIHN |
+
+Cara mendapatkan URL pencarian: buka pencarian di situs JDIH tersebut, cari satu kata, pindah ke halaman 2,
+salin alamatnya, lalu ganti kata yang dicari dengan `{q}` dan angka halaman dengan `{page}`. Isian divalidasi
+sebelum disimpan; gunakan **Tes koneksi** untuk memastikan peraturan & PDF dikenali. Sumber tambahan bisa
+dihapus (peraturan yang sudah ditemukannya tetap tersimpan); sumber bawaan cukup dinonaktifkan.
+
 ## Konfigurasi sumber data
 Di tab **Sumber Data**, tiap sumber memiliki URL dasar dan konfigurasi JSON.
 

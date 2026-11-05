@@ -21,6 +21,7 @@
     <button role="tab" data-tab="pemenuhan">Pemenuhan</button>
     <button role="tab" data-tab="sumber">Sumber Data</button>
     <button role="tab" data-tab="pengguna" class="admin-only" hidden>Pengguna</button>
+    <button role="tab" data-tab="pengaturan" class="admin-only" hidden>Pengaturan</button>
   </nav>
   <div class="usermenu">
     <span id="me-name"></span> <span id="me-role" class="badge-role"></span>
@@ -144,6 +145,7 @@
     <div class="toolbar">
       <p class="muted">Sinkronisasi menarik daftar peraturan dari situs JDIH sesuai kategori terpilih. Keputusan relevansi &amp; data pemenuhan tidak akan tertimpa.</p>
       <span class="spacer"></span>
+      <button id="btn-add-source" class="secondary admin-only" hidden>+ Tambah sumber</button>
       <button id="btn-sync-all" class="editor-only">Sinkronkan semua sumber aktif</button>
     </div>
     <div class="card portable-info" id="portable-info" hidden></div>
@@ -151,8 +153,9 @@
       <h2>Kata kunci pencarian <small>(kategori terpilih)</small></h2>
       <div id="kw-list"></div>
       <p class="muted">Kata kunci dipakai untuk mencari di JDIH BPK &amp; Kemnaker. Kategori setiap hasil tetap ditentukan
-        dari judulnya; hasil yang tidak termasuk kategori terpilih dilewati. Kata kunci per sumber bisa diganti lewat
-        <code>"keywords"</code> di konfigurasi.</p>
+        dari judulnya; hasil yang tidak termasuk kategori terpilih dilewati. Admin mengubah kata kunci dan
+        menambah kategori di tab <b>Pengaturan</b>; kata kunci khusus satu sumber bisa diisi lewat
+        <code>"keywords"</code> di konfigurasinya.</p>
     </div>
     <div id="sources" class="sources"></div>
     <div class="card">
@@ -162,6 +165,40 @@
   </section>
 
   <!-- PENGGUNA (admin) -->
+  <section id="tab-pengaturan" class="tab">
+    <div class="card">
+      <h2>Kategori regulasi &amp; kata kunci</h2>
+      <p class="muted">Setiap kategori punya dua daftar kata kunci:
+        <b>pencarian</b> dikirim ke situs JDIH saat sinkronisasi, dan <b>pengenal judul</b> menentukan kategori sebuah
+        peraturan dari judulnya. Satu kata kunci per baris (atau pisahkan dengan koma).
+        “Lainnya” menampung peraturan yang tidak cocok dengan kategori mana pun.</p>
+    </div>
+    <div id="cat-list" class="cat-list"></div>
+    <div class="grid2">
+      <div class="card">
+        <h2>Tambah kategori</h2>
+        <form id="form-cat" class="form">
+          <label>Nama kategori <input name="name" required maxlength="40" placeholder="mis. Energi &amp; Kelistrikan"></label>
+          <label>Kata kunci pencarian di JDIH (satu per baris)
+            <textarea name="search_keywords" rows="4" placeholder="ketenagalistrikan&#10;instalasi listrik"></textarea></label>
+          <label>Kata kunci pengenal judul <small class="muted">(kosong = sama dengan kata kunci pencarian)</small>
+            <textarea name="title_keywords" rows="4"></textarea></label>
+          <div class="actions"><button type="submit">Tambah kategori</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h2>Terapkan ulang ke peraturan yang ada</h2>
+        <p class="muted">Setelah mengubah kata kunci pengenal judul, kelompokkan ulang peraturan yang sudah tersimpan.
+          Peraturan yang kategorinya dipilih manual tidak dipindah; penilaian relevansi dan kewajiban tetap.</p>
+        <div class="actions" style="justify-content:flex-start">
+          <button class="secondary" id="btn-reclass-preview">Pratinjau perubahan</button>
+          <button id="btn-reclass-apply" hidden>Terapkan</button>
+        </div>
+        <div id="reclass-result"></div>
+      </div>
+    </div>
+  </section>
+
   <section id="tab-pengguna" class="tab">
     <div class="grid2">
       <div class="card flush">
@@ -189,6 +226,38 @@
     </div>
   </section>
 </main>
+
+<dialog id="dlg-source">
+  <form method="dialog" id="form-source" class="form">
+    <h2>Tambah sumber sinkronisasi</h2>
+    <label>Jenis sumber
+      <select name="kind">
+        <option value="html">Situs JDIH (halaman pencarian)</option>
+        <option value="jdihn">Feed JSON format JDIHN</option>
+      </select></label>
+    <label>Nama <input name="name" required maxlength="60" placeholder="mis. JDIH KLHK"></label>
+    <div data-kind="html">
+      <label>URL dasar situs <input name="base_url" type="url" placeholder="https://jdih.contoh.go.id"></label>
+      <label>URL pencarian <input name="search_url" placeholder="{base}/peraturan?cari={q}&amp;halaman={page}"></label>
+      <p class="hint">Buka pencarian di situs JDIH-nya, cari satu kata, pindah ke halaman 2, lalu salin alamatnya.
+        Ganti kata yang dicari dengan <code>{q}</code> dan nomor halaman dengan <code>{page}</code>;
+        <code>{base}</code> = URL dasar.</p>
+      <label>Pola alamat halaman peraturan (regex) <input name="link_pattern" placeholder="peraturan/detail/\d+"></label>
+      <p class="hint">Bagian tetap dari alamat halaman satu peraturan. Contoh alamat
+        <code>…/peraturan/detail/1588/perpres-7-2019</code> → <code>peraturan/detail/\d+</code></p>
+      <div class="row">
+        <label>Halaman per kata kunci <input name="max_pages" type="number" min="1" max="50" value="2"></label>
+        <label>Pola tautan PDF (opsional) <input name="pdf_pattern" placeholder="\.pdf"></label>
+      </div>
+    </div>
+    <div data-kind="jdihn" hidden>
+      <label>URL feed JSON <input name="feed_url" type="url" placeholder="https://jdih.contoh.go.id/integrasi/jdihn"></label>
+      <p class="hint">Alamat feed integrasi JDIHN dari situs JDIH anggota (biasanya tersedia dari admin JDIH-nya).</p>
+    </div>
+    <p class="error" id="source-error"></p>
+    <div class="actions"><button value="cancel" class="secondary" formnovalidate>Batal</button><button value="ok">Simpan</button></div>
+  </form>
+</dialog>
 
 <dialog id="dlg-password">
   <form method="dialog" id="form-password" class="form">

@@ -26,6 +26,9 @@ PUBLIC_PATHS = {"/login", "/healthz", "/api/auth/login", "/api/auth/setup", "/ap
 # (method, path regex) that need admin; everything else that writes needs editor.
 ADMIN_ONLY = [
     ("PATCH", re.compile(r"^/api/sources/")),
+    ("POST", re.compile(r"^/api/sources$")),
+    ("DELETE", re.compile(r"^/api/sources/")),
+    ("*", re.compile(r"^/api/categories")),  # reading is open to all (GET returns early above)
     ("*", re.compile(r"^/api/users")),
 ]
 SELF_SERVICE = {"/api/auth/logout", "/api/auth/password"}

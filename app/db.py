@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS sync_log (
     message    TEXT
 );
 
+-- Regulation categories, editable in the app (K3, Lingkungan, ... plus user-defined ones).
+CREATE TABLE IF NOT EXISTS categories (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT UNIQUE NOT NULL COLLATE NOCASE,
+    search_keywords  TEXT NOT NULL DEFAULT '[]', -- JSON list: terms searched on JDIH sites
+    title_keywords   TEXT NOT NULL DEFAULT '[]', -- JSON list: terms that put a title in this category
+    position         INTEGER NOT NULL DEFAULT 0,
+    builtin          INTEGER NOT NULL DEFAULT 0, -- 1 = shipped with the app
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
 -- Cross-process locks (e.g. only one computer may run a sync on a shared database).
 CREATE TABLE IF NOT EXISTS locks (
     name        TEXT PRIMARY KEY,

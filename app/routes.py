@@ -2,6 +2,7 @@
 import csv
 import io
 import json
+import re
 from datetime import date
 from urllib.parse import quote_plus, urlparse
 
@@ -10,9 +11,10 @@ from flask import Blueprint, Response, abort, current_app, jsonify, request, sen
 from .connectors.base import make_record
 from .connectors.jdihn import parse_feed
 from .db import get_db, now
-from .legal import CATEGORIES, citation, parse_search, search_score
+from . import categories as catmod
+from .legal import citation, parse_search, search_score
 from .connectors import get_connector
-from .connectors.base import DEFAULT_KEYWORDS, ConnectorError
+from .connectors.base import ConnectorError
 from .sync import SyncBusy, apply_suggestions, resolve_regulation, run_sync_job, upsert_regulation
 
 bp = Blueprint("api", __name__)
@@ -50,10 +52,14 @@ def compliance_of(row):
     return "belum", pct
 
 
+def _cat_names():
+    return catmod.names(get_db())
+
+
 def _categories_arg():
     raw = request.args.get("category", "")
-    cats = [c for c in raw.split(",") if c in CATEGORIES]
-    return cats
+    known = _cat_names()
+    return [c for c in raw.split(",") if c in known]
 
 
 def _in_clause(column, values, params):
@@ -93,14 +99,163 @@ def index():
 
 @bp.get("/api/meta")
 def meta():
-    return jsonify(categories=CATEGORIES, relevance=RELEVANCE, obligation_status=OBL_STATUS,
-                   regulation_status=REG_STATUS, search_keywords=DEFAULT_KEYWORDS,
+    return jsonify(categories=_cat_names(), relevance=RELEVANCE, obligation_status=OBL_STATUS,
+                   regulation_status=REG_STATUS, search_keywords=catmod.search_map(get_db()),
                    portable=current_app.config["PORTABLE"],
                    database=current_app.config["DATABASE"] if current_app.config["PORTABLE"] else None,
                    backup_before_sync=current_app.config["BACKUP_BEFORE_SYNC"])
 
 
+# ---------------------------------------------------------------- categories & keywords
+@bp.get("/api/categories")
+def list_categories():
+    db = get_db()
+    counts = dict(db.execute("SELECT category, COUNT(*) FROM regulations GROUP BY category").fetchall())
+    return jsonify([{**c, "regulations": counts.get(c["name"], 0)} for c in catmod.load(db)])
+
+
+def _category_call(fn, *args):
+    try:
+        return fn(get_db(), *args)
+    except catmod.CategoryError as exc:
+        abort(400, str(exc))
+    except LookupError as exc:
+        abort(404, str(exc))
+
+
+@bp.post("/api/categories")
+def create_category():
+    data = _json_body()
+    cid = _category_call(catmod.create, data.get("name"), data.get("search_keywords"), data.get("title_keywords"))
+    return jsonify(catmod.get(get_db(), cid)), 201
+
+
+@bp.patch("/api/categories/<int:cid>")
+def update_category(cid):
+    return jsonify(_category_call(catmod.update, cid, _json_body()))
+
+
+@bp.delete("/api/categories/<int:cid>")
+def delete_category(cid):
+    moved = _category_call(catmod.delete, cid)
+    return jsonify(moved_to_fallback=moved)
+
+
+@bp.post("/api/categories/reclassify")
+def reclassify_categories():
+    """Apply the title keywords again to regulations whose category was not chosen by hand."""
+    data = request.get_json(silent=True) or {}
+    return jsonify(catmod.reclassify(get_db(), dry_run=bool(data.get("dry_run"))))
+
+
 # ---------------------------------------------------------------- sources & sync
+BUILTIN_SOURCES = {"seed", "bpk", "kemnaker", "jdihn", "manual", "import"}
+CUSTOM_KINDS = {"html": "Situs JDIH (halaman pencarian)", "jdihn": "Feed JSON JDIHN"}
+
+
+def _http_url(value, what):
+    value = (value or "").strip()
+    if urlparse(value).scheme not in ("http", "https") or not urlparse(value).netloc:
+        abort(400, f"{what} harus berupa alamat http:// atau https:// yang lengkap")
+    return value
+
+
+def _check_regex(pattern, what):
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        abort(400, f"{what} bukan regex yang valid: {exc}")
+
+
+def _validate_config(kind, base_url, config):
+    """Reject settings that would make every sync of this source fail."""
+    if not isinstance(config, dict):
+        abort(400, "config harus berupa objek JSON")
+    for key in ("link_pattern", "pdf_pattern"):
+        if config.get(key):
+            _check_regex(str(config[key]), key)
+    if "keywords" in config:
+        try:
+            config["keywords"] = catmod.parse_keywords(config["keywords"])
+        except catmod.CategoryError as exc:
+            abort(400, str(exc))
+        if not config["keywords"]:
+            config.pop("keywords")  # empty = use the categories' keywords
+    for key, lo, hi in (("max_pages", 1, 50), ("detail_limit", 0, 200), ("lookup_limit", 0, 200)):
+        if key in config:
+            try:
+                val = int(config[key])
+            except (TypeError, ValueError):
+                abort(400, f"{key} harus berupa angka")
+            if not lo <= val <= hi:
+                abort(400, f"{key} harus {lo}–{hi}")
+            config[key] = val
+    for key, fields in (("search_url", {"q": "x", "page": 1}),
+                        ("lookup_url", {"q": "x", "page": 1, "jenis": "PP", "nomor": "1", "tahun": 2020})):
+        tmpl = config.get(key)
+        if not tmpl:
+            continue
+        try:
+            sample = str(tmpl).format(base=base_url or "https://contoh.go.id", **fields)
+        except (KeyError, IndexError, ValueError) as exc:
+            abort(400, f"{key}: placeholder tidak dikenal ({exc}); gunakan {{base}}, {{q}}, {{page}}"
+                       + (", {jenis}, {nomor}, {tahun}" if key == "lookup_url" else ""))
+        _http_url(sample, key)
+    if kind == "html":
+        if not config.get("search_url") or "{page}" not in config["search_url"]:
+            abort(400, "search_url wajib diisi dan memuat {page} (nomor halaman hasil)")
+        if not config.get("link_pattern"):
+            abort(400, "link_pattern wajib diisi (pola alamat halaman peraturan, mis. peraturan/detail/\\d+)")
+    if kind == "jdihn" and config.get("feed_url"):
+        _http_url(config["feed_url"], "feed_url")
+    return config
+
+
+@bp.post("/api/sources")
+def create_source():
+    """Add a custom sync source (another JDIH website or a JDIHN JSON feed)."""
+    db = get_db()
+    data = _json_body()
+    kind = data.get("kind")
+    if kind not in CUSTOM_KINDS:
+        abort(400, "Jenis sumber harus 'html' (situs JDIH) atau 'jdihn' (feed JSON)")
+    name = " ".join(str(data.get("name") or "").split())
+    if not 1 <= len(name) <= 60:
+        abort(400, "Nama sumber wajib diisi (maks. 60 karakter)")
+    base_url = (data.get("base_url") or "").strip().rstrip("/") or None
+    if kind == "html":
+        base_url = _http_url(base_url, "URL dasar")
+    config = _validate_config(kind, base_url, dict(data.get("config") or {}))
+    if kind == "jdihn" and not config.get("feed_url"):
+        abort(400, "feed_url wajib diisi untuk feed JSON")
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:30] or "sumber"
+    code, n = f"custom-{slug}", 2
+    while db.execute("SELECT 1 FROM sources WHERE code = ?", (code,)).fetchone():
+        code, n = f"custom-{slug}-{n}", n + 1
+    cur = db.execute("INSERT INTO sources (code, name, kind, base_url, config, enabled) VALUES (?,?,?,?,?,1)",
+                     (code, name, kind, base_url, json.dumps(config)))
+    db.commit()
+    row = db.execute("SELECT * FROM sources WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return jsonify({**dict(row), "config": json.loads(row["config"])}), 201
+
+
+@bp.delete("/api/sources/<int:sid>")
+def delete_source(sid):
+    """Remove a custom source. Regulations it found stay in the register."""
+    db = get_db()
+    row = db.execute("SELECT * FROM sources WHERE id = ?", (sid,)).fetchone()
+    if row is None:
+        abort(404, "Sumber tidak ditemukan")
+    if row["code"] in BUILTIN_SOURCES:
+        abort(400, "Sumber bawaan tidak dapat dihapus; nonaktifkan saja")
+    kept = db.execute("UPDATE regulations SET source_id = NULL WHERE source_id = ?", (sid,)).rowcount
+    db.execute("DELETE FROM sync_log WHERE source_id = ?", (sid,))
+    db.execute("DELETE FROM sources WHERE id = ?", (sid,))
+    db.commit()
+    return jsonify(deleted=True, regulations_kept=kept)
+
+
+# ---------------------------------------------------------------- sources & sync (existing)
 @bp.get("/api/sources")
 def list_sources():
     rows = get_db().execute("SELECT * FROM sources ORDER BY id").fetchall()
@@ -110,17 +265,25 @@ def list_sources():
 @bp.patch("/api/sources/<int:sid>")
 def update_source(sid):
     db = get_db()
-    if not db.execute("SELECT 1 FROM sources WHERE id = ?", (sid,)).fetchone():
+    src = db.execute("SELECT * FROM sources WHERE id = ?", (sid,)).fetchone()
+    if src is None:
         abort(404, "Sumber tidak ditemukan")
     data = _json_body()
+    if "name" in data and src["code"] not in BUILTIN_SOURCES:
+        name = " ".join(str(data["name"] or "").split())
+        if not 1 <= len(name) <= 60:
+            abort(400, "Nama sumber wajib diisi (maks. 60 karakter)")
+        db.execute("UPDATE sources SET name = ? WHERE id = ?", (name, sid))
     if "enabled" in data:
         db.execute("UPDATE sources SET enabled = ? WHERE id = ?", (1 if data["enabled"] else 0, sid))
     if "base_url" in data:
         db.execute("UPDATE sources SET base_url = ? WHERE id = ?", (data["base_url"] or None, sid))
     if "config" in data:
-        if not isinstance(data["config"], dict):
-            abort(400, "config harus berupa objek JSON")
-        db.execute("UPDATE sources SET config = ? WHERE id = ?", (json.dumps(data["config"]), sid))
+        base = data.get("base_url", src["base_url"])
+        # Built-in BPK/Kemnaker sources have defaults in code, so their config may stay partial.
+        kind = src["kind"] if src["code"] not in BUILTIN_SOURCES else None
+        config = _validate_config(kind, base, dict(data["config"]) if isinstance(data["config"], dict) else None)
+        db.execute("UPDATE sources SET config = ? WHERE id = ?", (json.dumps(config), sid))
     db.commit()
     return list_sources()
 
@@ -136,8 +299,10 @@ def test_source(sid):
     if src is None:
         abort(404, "Sumber tidak ditemukan")
     conn = get_connector(src["kind"], src["base_url"], json.loads(src["config"] or "{}"))
+    if src["kind"] == "jdihn":
+        return jsonify(_test_feed(conn))
     if not hasattr(conn, "search_url"):
-        abort(400, "Tes koneksi hanya untuk sumber situs JDIH (BPK/Kemnaker)")
+        abort(400, "Tes koneksi hanya untuk sumber situs JDIH atau feed JSON")
     data = request.get_json(silent=True) or {}
     keyword = (data.get("keyword") or "keselamatan kerja").strip()
     url = conn.search_url(keyword, 1)
@@ -166,11 +331,38 @@ def test_source(sid):
     return jsonify(out)
 
 
+def _test_feed(conn):
+    from .connectors.jdihn import parse_feed as _parse
+
+    url = conn.config.get("feed_url") or conn.base_url
+    out = {"url": url, "ok": False}
+    if not url:
+        out["error"] = "feed_url belum diisi"
+        return out
+    try:
+        resp = conn.get(url)
+        records = _parse(resp.json())
+    except ConnectorError as exc:
+        out["error"] = str(exc)
+        return out
+    except ValueError as exc:
+        out["error"] = f"Respons bukan feed JSON yang dikenali: {exc}"
+        return out
+    out.update(http_status=resp.status_code, bytes=len(resp.text), links=len(records), matching_links=len(records),
+               found=len(records), notes=conn.notes,
+               samples=[{"citation": f"{r['jenis']} No. {r['nomor']} Tahun {r['tahun']}", "judul": r["judul"],
+                         "status": r["status_berlaku"], "url": r["url"], "pdf_url": r["pdf_url"]}
+                        for r in records[:5]])
+    out["ok"] = bool(records)
+    return out
+
+
 @bp.post("/api/sync")
 def sync():
     db = get_db()
     data = request.get_json(silent=True) or {}
-    cats = [c for c in data.get("categories") or [] if c in CATEGORIES] or None
+    known = _cat_names()
+    cats = [c for c in data.get("categories") or [] if c in known] or None
     ids = data.get("source_ids")
     if ids:
         params = []
@@ -285,7 +477,7 @@ def update_regulation(rid):
         db.execute("UPDATE regulations SET relevance_note = ?, updated_at = ? WHERE id = ?",
                    (data["relevance_note"], now(), rid))
     if "category" in data:
-        if data["category"] not in CATEGORIES:
+        if data["category"] not in _cat_names():
             abort(400, "Kategori tidak valid")
         db.execute("UPDATE regulations SET category = ?, category_locked = 1, updated_at = ? WHERE id = ?",
                    (data["category"], now(), rid))
@@ -349,7 +541,7 @@ def bulk_update():
     for rid in ids:
         if "relevance" in data:
             _set_relevance(db, rid, data["relevance"])
-        if data.get("category") in CATEGORIES:
+        if data.get("category") in _cat_names():
             db.execute("UPDATE regulations SET category = ?, category_locked = 1, updated_at = ? WHERE id = ?",
                        (data["category"], now(), rid))
     db.commit()
@@ -364,7 +556,7 @@ def create_regulation():
                       status=data.get("status_berlaku"), url=data.get("url"))
     if not rec:
         abort(400, "jenis, nomor dan judul wajib diisi")
-    if data.get("category") in CATEGORIES:
+    if data.get("category") in _cat_names():
         rec["category"] = data["category"]
     manual = db.execute("SELECT id FROM sources WHERE code = 'manual'").fetchone()
     if manual is None:
@@ -390,12 +582,13 @@ def import_file():
             abort(400, f"JSON tidak valid: {exc}")
     else:
         records = []
+        known = _cat_names()
         for row in csv.DictReader(io.StringIO(text)):
             row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
             rec = make_record(row.get("jenis"), row.get("nomor"), row.get("tahun"), row.get("judul"),
                               status=row.get("status") or row.get("status_berlaku"), url=row.get("url"))
             if rec:
-                if row.get("category") in CATEGORIES:
+                if row.get("category") in known:
                     rec["category"] = row["category"]
                 records.append(rec)
     src = db.execute("SELECT id FROM sources WHERE code = 'import'").fetchone()
@@ -493,7 +686,7 @@ def _pct(done, applicable):
 @bp.get("/api/dashboard")
 def dashboard():
     db = get_db()
-    cats = _categories_arg() or CATEGORIES
+    cats = _categories_arg() or _cat_names()
     today = date.today().isoformat()
 
     params = []

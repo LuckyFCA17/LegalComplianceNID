@@ -2,6 +2,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+from .categories import rules as category_rules, search_map
 from .connectors import get_connector
 from .connectors.base import ConnectorError
 from .db import acquire_lock, backup_database, now, release_lock, whoami
@@ -36,13 +37,15 @@ def ensure_sources(conn):
     conn.commit()
 
 
-def upsert_regulation(conn, rec, source_id):
+def upsert_regulation(conn, rec, source_id, rules=None):
     """Insert or update one normalised record. Returns 'inserted', 'updated' or 'unchanged'.
 
     Sync never touches user decisions: relevance, notes and manually locked categories
     are preserved; only bibliographic fields and the legal status are refreshed.
     """
     key = reg_key(rec["jenis"], rec["nomor"], rec["tahun"])
+    if rules is None:
+        rules = category_rules(conn)
     ts = now()
     row = conn.execute("SELECT * FROM regulations WHERE reg_key = ?", (key,)).fetchone()
     suggested = json.dumps(rec.get("suggested") or [])
@@ -51,7 +54,7 @@ def upsert_regulation(conn, rec, source_id):
             """INSERT INTO regulations (source_id, reg_key, jenis, nomor, tahun, judul, status_berlaku,
                url, pdf_url, category, suggested, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (source_id, key, rec["jenis"], rec["nomor"], rec["tahun"], rec["judul"], rec["status_berlaku"],
-             rec.get("url"), rec.get("pdf_url"), rec.get("category") or classify(rec["judul"], rec["jenis"]), suggested, ts, ts),
+             rec.get("url"), rec.get("pdf_url"), rec.get("category") or classify(rec["judul"], rec["jenis"], rules), suggested, ts, ts),
         )
         return "inserted"
 
@@ -67,7 +70,7 @@ def upsert_regulation(conn, rec, source_id):
     if rec.get("suggested") and row["suggested"] in (None, "", "[]"):
         changes["suggested"] = suggested
     if not row["category_locked"]:
-        cat = rec.get("category") or classify(changes.get("judul", row["judul"]), row["jenis"])
+        cat = rec.get("category") or classify(changes.get("judul", row["judul"]), row["jenis"], rules)
         if cat != row["category"]:
             changes["category"] = cat
     if not changes:
@@ -87,12 +90,14 @@ def run_sync(conn, source, categories=None, connector=None):
     try:
         conn_obj = connector or get_connector(source["kind"], source["base_url"],
                                               json.loads(source["config"] or "{}"))
+        rules = category_rules(conn)
+        conn_obj.category_keywords = search_map(conn)  # search terms as configured in the app
         for rec in conn_obj.fetch(categories):
             stats["fetched"] += 1
             if categories and rec.get("category") is None:
-                if classify(rec["judul"], rec["jenis"]) not in categories:
+                if classify(rec["judul"], rec["jenis"], rules) not in categories:
                     continue
-            stats[upsert_regulation(conn, rec, source["id"])] += 1
+            stats[upsert_regulation(conn, rec, source["id"], rules)] += 1
             if stats["fetched"] % 10 == 0:
                 # Short write transactions: never hold the database lock while waiting on the network,
                 # so other users (or other computers on a shared database) are not blocked for minutes.

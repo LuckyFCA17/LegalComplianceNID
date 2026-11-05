@@ -106,24 +106,36 @@ def reg_key(jenis, nomor, tahun):
     return f"{normalize_jenis(jenis).lower()}|{nomor}|{tahun or ''}"
 
 
-def classify(judul, jenis=""):
-    """Return the most likely compliance category for a regulation title."""
+FALLBACK_CATEGORY = "Lainnya"
+
+
+def classify(judul, jenis="", rules=None):
+    """Return the most likely compliance category for a regulation title.
+
+    rules: ordered [(category name, [title keywords])], normally the categories configured in the
+    app (app.categories.rules); defaults to the built-in K3/Lingkungan/Ketenagakerjaan lists.
+    Ties go to the category listed first.
+    """
+    if rules is None:
+        rules = list(CATEGORY_KEYWORDS.items())
     text = f" {(judul or '').lower()} "
-    scores = {}
-    for cat, words in CATEGORY_KEYWORDS.items():
+    best, best_score = None, 0
+    for cat, words in rules:
         score = 0
         for w in words:
-            if re.search(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", text):
+            w = w.lower().strip()
+            if w and re.search(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", text):
                 score += 2 if " " in w else 1  # multi-word phrases are stronger evidence
-        scores[cat] = score
-    best = max(scores, key=lambda c: scores[c])
-    if scores[best] > 0:
+        if score > best_score:
+            best, best_score = cat, score
+    if best:
         return best
-    if normalize_jenis(jenis) in ("Permenaker", "Kepmenaker"):
+    names = {cat for cat, _ in rules}
+    if normalize_jenis(jenis) in ("Permenaker", "Kepmenaker") and "Ketenagakerjaan" in names:
         return "Ketenagakerjaan"
-    if normalize_jenis(jenis) in ("Permen LHK", "Permen LH", "Kepmen LH(K)"):
+    if normalize_jenis(jenis) in ("Permen LHK", "Permen LH", "Kepmen LH(K)") and "Lingkungan" in names:
         return "Lingkungan"
-    return "Lainnya"
+    return FALLBACK_CATEGORY
 
 
 def normalize_status(text):

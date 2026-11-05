@@ -10,6 +10,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from . import db as dbmod
 from .auth import ROLES, bootstrap_admin, create_user
+from .categories import ensure_defaults as ensure_categories
 from .sync import SyncBusy, ensure_sources, run_sync, run_sync_job
 
 
@@ -63,6 +64,7 @@ def create_app(config=None):
 
     conn = dbmod.connect(app.config["DATABASE"])
     dbmod.init_db(conn)
+    ensure_categories(conn)
     ensure_sources(conn)
     if app.config["SEED_ON_START"] and conn.execute("SELECT COUNT(*) FROM regulations").fetchone()[0] == 0:
         # Two computers opening a fresh shared database at once must not both load the catalogue.

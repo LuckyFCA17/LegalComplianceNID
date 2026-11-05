@@ -242,3 +242,14 @@ a.link { color: var(--accent); }
 .portable-info { border-left: 3px solid var(--accent); }
 .portable-info p { margin: 0 0 8px; overflow-wrap: anywhere; }
 .portable-info code { font-size: 12px; }
+
+/* settings: categories */
+.cat-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.cat-card .head { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.cat-card .head input { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; }
+.cat-card label { display: block; font-size: 12px; color: var(--ink-2); margin-top: 10px; }
+.cat-card textarea { width: 100%; margin-top: 4px; font-size: 13px; }
+.cat-card .actions, .card .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.form .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; overflow-wrap: anywhere; }
+.form .hint code, #dlg-source code { font-size: 12px; }
+#dlg-source { width: min(640px, calc(100% - 32px)); }
