@@ -14,6 +14,7 @@ from .connectors.jdihn import parse_feed
 from .db import get_db, now
 from . import categories as catmod
 from . import analysis, ocr, ocr_jobs
+from .ocr_correct import text_quality
 from .legal import citation, parse_search, search_score, search_tokens
 from .connectors import get_connector
 from .connectors.base import ConnectorError
@@ -668,7 +669,13 @@ def _text_meta(row):
             "scanned": bool(row["scanned"]), "chars": len(row["text"]), "fetched_at": row["fetched_at"],
             "fetched_by": row["fetched_by"], "needs_ocr": row["needs_ocr"], "ocr_pages": row["ocr_pages"],
             "ocr_low_pages": json.loads(row["ocr_low_pages"] or "[]"), "has_pdf": bool(row["pdf_file"]),
-            "edited": bool(row["edited"])}
+            "edited": bool(row["edited"]), "text_quality": row["text_quality"], "ocr_conf": row["ocr_conf"],
+            "ocr_mode": row["ocr_mode"],
+            # a PDF text layer that reads badly (often old OCR by the publisher): suggest reading it again
+            "poor_text": row["origin"] in ("pdf_url", "upload") and row["text_quality"] is not None
+                         and row["text_quality"] < ocr_jobs.POOR_QUALITY and not row["scanned"],
+            "versions": get_db().execute("SELECT COUNT(*) FROM regulation_text_versions WHERE regulation_id = ?",
+                                         (row["regulation_id"],)).fetchone()[0]}
 
 
 def _store_text(rid, origin, text, pages=None, scanned=False, filename=None, pdf=None, empty_pages=()):
@@ -676,12 +683,17 @@ def _store_text(rid, origin, text, pages=None, scanned=False, filename=None, pdf
     db = get_db()
     if not scanned and not empty_pages and len(text.strip()) < 50:
         abort(400, "Teks terlalu pendek untuk dianalisa")
-    pdf_file = ocr_jobs.save_pdf(current_app.config["DATABASE"], rid, pdf) if pdf and empty_pages else None
+    # Every PDF is kept, so it can be read (again) with OCR later even if its text layer looked fine.
+    pdf_file = ocr_jobs.save_pdf(current_app.config["DATABASE"], rid, pdf) if pdf else None
+    old = db.execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    if old is not None and old["text"].strip():
+        ocr_jobs.save_version(db, rid, old, g.user["name"], "diganti teks baru")
+    quality = text_quality(text, ocr_jobs.trusted_lexicon(db)) if text.strip() else 0
     db.execute("INSERT OR REPLACE INTO regulation_texts (regulation_id, origin, filename, pages, scanned, text, "
-               "fetched_at, fetched_by, needs_ocr, ocr_pages, ocr_low_pages, pdf_file, edited) "
-               "VALUES (?,?,?,?,?,?,?,?,?,0,NULL,?,0)",
+               "fetched_at, fetched_by, needs_ocr, ocr_pages, ocr_low_pages, pdf_file, edited, text_quality) "
+               "VALUES (?,?,?,?,?,?,?,?,?,0,NULL,?,0,?)",
                (rid, origin, filename, pages, 1 if scanned else 0, text, now(), g.user["name"],
-                len(empty_pages), pdf_file))
+                len(empty_pages), pdf_file, quality))
     db.execute("DELETE FROM ocr_jobs WHERE regulation_id = ?", (rid,))
     db.commit()
     return regulation_analysis(rid)
@@ -753,8 +765,10 @@ def edit_regulation_text(rid):
     text = analysis.clean_text(str(_json_body().get("text") or ""))
     if len(text.strip()) < 50:
         abort(400, "Teks terlalu pendek untuk dianalisa")
-    db.execute("UPDATE regulation_texts SET text = ?, edited = 1, fetched_at = ?, fetched_by = ? "
-               "WHERE regulation_id = ?", (text, now(), g.user["name"], rid))
+    old = db.execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    ocr_jobs.save_version(db, rid, old, g.user["name"], "sebelum disunting")
+    db.execute("UPDATE regulation_texts SET text = ?, edited = 1, fetched_at = ?, fetched_by = ?, text_quality = ? "
+               "WHERE regulation_id = ?", (text, now(), g.user["name"], text_quality(text), rid))
     db.commit()
     return regulation_analysis(rid)
 
@@ -769,6 +783,7 @@ def delete_regulation_text(rid):
         except OSError:
             pass
     db.execute("DELETE FROM regulation_texts WHERE regulation_id = ?", (rid,))
+    db.execute("DELETE FROM regulation_text_versions WHERE regulation_id = ?", (rid,))
     db.execute("DELETE FROM ocr_jobs WHERE regulation_id = ?", (rid,))
     db.commit()
     return "", 204
@@ -789,14 +804,87 @@ def ocr_job_status(rid):
 
 @bp.post("/api/regulations/<int:rid>/ocr")
 def start_ocr(rid):
+    """Start OCR. Body (all optional): mode scan|all|pages, pages "1,3-5", quality standar|teliti."""
     _get_reg(rid)
+    data = request.get_json(silent=True) or {}
     try:
-        ocr_jobs.start(get_db(), current_app.config["DATABASE"], rid, g.user["name"])
+        ocr_jobs.start(get_db(), current_app.config["DATABASE"], rid, g.user["name"],
+                       mode=data.get("mode") or "scan", pages=data.get("pages"),
+                       quality=data.get("quality") or "standar")
     except ocr_jobs.OcrBusy as exc:
         return jsonify(error=str(exc)), 409
     except ValueError as exc:
         abort(400, str(exc))
     return jsonify(job=ocr_jobs.job(get_db(), rid)), 202
+
+
+@bp.get("/api/regulations/<int:rid>/ocr/result")
+def ocr_result_text(rid):
+    """The OCR result waiting for review, to compare with the current text."""
+    _get_reg(rid)
+    row = get_db().execute("SELECT result_text, result_meta FROM ocr_jobs WHERE regulation_id = ? "
+                           "AND status = 'review'", (rid,)).fetchone()
+    if row is None or not row["result_text"]:
+        abort(404, "Tidak ada hasil OCR yang menunggu keputusan")
+    return jsonify(content=row["result_text"], result=json.loads(row["result_meta"] or "{}"))
+
+
+@bp.post("/api/regulations/<int:rid>/ocr/accept")
+def accept_ocr(rid):
+    _get_reg(rid)
+    try:
+        ocr_jobs.accept(get_db(), rid, g.user["name"])
+    except ValueError as exc:
+        abort(400, str(exc))
+    return regulation_analysis(rid)
+
+
+@bp.post("/api/regulations/<int:rid>/ocr/discard")
+def discard_ocr(rid):
+    _get_reg(rid)
+    ocr_jobs.discard(get_db(), rid)
+    return regulation_analysis(rid)
+
+
+@bp.get("/api/regulations/<int:rid>/text/versions")
+def text_versions(rid):
+    _get_reg(rid)
+    rows = get_db().execute("SELECT id, origin, meta, saved_at, saved_by, reason, LENGTH(text) AS chars "
+                            "FROM regulation_text_versions WHERE regulation_id = ? ORDER BY id DESC", (rid,)).fetchall()
+    return jsonify([{**dict(r), "meta": json.loads(r["meta"] or "{}")} for r in rows])
+
+
+@bp.get("/api/regulations/<int:rid>/text/versions/<int:vid>")
+def text_version(rid, vid):
+    _get_reg(rid)
+    row = get_db().execute("SELECT * FROM regulation_text_versions WHERE id = ? AND regulation_id = ?",
+                           (vid, rid)).fetchone()
+    if row is None:
+        abort(404, "Versi tidak ditemukan")
+    return jsonify({**dict(row), "meta": json.loads(row["meta"] or "{}")})
+
+
+@bp.post("/api/regulations/<int:rid>/text/versions/<int:vid>/restore")
+def restore_text_version(rid, vid):
+    """Bring back an earlier text; the current one becomes a version itself."""
+    _get_reg(rid)
+    db = get_db()
+    ver = db.execute("SELECT * FROM regulation_text_versions WHERE id = ? AND regulation_id = ?", (vid, rid)).fetchone()
+    cur = db.execute("SELECT * FROM regulation_texts WHERE regulation_id = ?", (rid,)).fetchone()
+    if ver is None or cur is None:
+        abort(404, "Versi tidak ditemukan")
+    ocr_jobs.save_version(db, rid, cur, g.user["name"], f"sebelum versi {fmt_ts(ver['saved_at'])} dikembalikan")
+    meta = json.loads(ver["meta"] or "{}")
+    db.execute("UPDATE regulation_texts SET text = ?, origin = ?, edited = ?, text_quality = ?, ocr_conf = ?, "
+               "ocr_mode = ?, fetched_at = ?, fetched_by = ? WHERE regulation_id = ?",
+               (ver["text"], ver["origin"], 1 if meta.get("edited") else 0, meta.get("text_quality"),
+                meta.get("ocr_conf"), meta.get("ocr_mode"), now(), g.user["name"], rid))
+    db.commit()
+    return regulation_analysis(rid)
+
+
+def fmt_ts(iso):
+    return (iso or "").replace("T", " ")[:16]
 
 
 @bp.post("/api/regulations/<int:rid>/ocr/cancel")

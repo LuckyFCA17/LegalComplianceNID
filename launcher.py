@@ -138,8 +138,12 @@ def _check_ocr():
         path = os.path.join(tmp, "uji.png")
         img.save(path)
         text, conf = ocr.ocr_image(st["path"], st["lang"], path)
-    good = "wajib" in text.lower()
-    print(f" OCR       : {'OK' if good else 'GAGAL'} ({st['lang']}, keyakinan {conf or 0:.0f}) — {st['path']}")
+        # the full page pipeline: image clean-up (NumPy) + best-of-variants
+        text2, conf2, variant, _low = ocr.ocr_page_image(st, img, "standar", tmp)
+    good = "wajib" in text.lower() and "wajib" in text2.lower()
+    best = st.get("lang_best") or "tidak ada"
+    print(f" OCR       : {'OK' if good else 'GAGAL'} ({st['lang']}, keyakinan {conf or 0:.0f}/{conf2 or 0:.0f}, "
+          f"{variant}; model teliti: {best}) — {st['path']}")
     return good or not required
 
 

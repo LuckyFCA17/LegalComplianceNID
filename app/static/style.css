@@ -307,3 +307,15 @@ label.check { display: inline-flex; align-items: center; gap: 6px; color: var(--
 #obl-pic { max-width: 220px; }
 .date-range { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
 .date-range[hidden] { display: none; }
+
+/* OCR again, review and versions */
+.ocr-redo, .ocr-review, .an-versions { margin-top: 10px; padding: 12px 16px; border-radius: 10px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--surface); }
+.ocr-review { border-left: 3px solid var(--accent); margin-top: 12px; }
+.redo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 8px 0; }
+.redo-grid fieldset { border: 1px solid var(--grid); border-radius: 8px; padding: 8px 12px; margin: 0; }
+.redo-grid legend { font-size: 12px; color: var(--ink-2); }
+.redo-grid label { display: block; margin: 4px 0; }
+table.compare { margin: 8px 0; font-size: 13px; }
+table.compare td, table.compare th { padding: 6px 10px; }
+.an-versions li { font-size: 13px; }

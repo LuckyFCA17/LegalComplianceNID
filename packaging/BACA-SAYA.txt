@@ -97,6 +97,14 @@ Folder "data" (database, backup) dibuat otomatis saat program pertama kali dibuk
     Biarkan jendela hitam terbuka sampai selesai. Hasilnya tersimpan untuk
     semua komputer. Periksa halaman yang ditandai "keyakinan rendah" dan
     perbaiki salah baca lewat "Sunting teks".
+  - "OCR ulang..." membaca ulang PDF yang sudah ada: pilih halaman scan saja,
+    semua halaman, atau halaman tertentu (mis. 1,3-5), dan Standar/Teliti
+    (Teliti lebih akurat untuk ketikan mesin tik, tetapi 3-5x lebih lama).
+    Bila teks lama pernah disunting, hasil baru ditampilkan berdampingan dulu:
+    pilih "Pakai hasil baru" atau "Tetap pakai teks sekarang".
+  - Teks lama selalu tersimpan di "Riwayat teks" dan bisa dipulihkan.
+  - "Kualitas teks" (0-100) menilai keterbacaan teks; di bawah 70 sebaiknya
+    di-OCR ulang. Salah baca umum (Pasa1, BAB |, (l)) diperbaiki otomatis.
   - Centang "Cari juga di isi peraturan" di tab Regulasi untuk mencari kata
     di dalam teks peraturan yang sudah diambil.
 

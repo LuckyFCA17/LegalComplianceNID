@@ -68,7 +68,8 @@ def test_scanned_pages_are_detected():
 @needs_tesseract
 def test_ocr_reads_a_scanned_page():
     res = ocr.ocr_pdf(scanned_pdf(fixture_chunks()), [1])
-    text, conf = res[1]
+    text, conf, variant, unsure = res[1]
+    assert variant.startswith("pra-proses")
     assert "dilarang mempekerjakan" in text and conf > 60
 
 

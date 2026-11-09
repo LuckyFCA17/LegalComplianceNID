@@ -39,6 +39,8 @@ jobs:
           $t = "C:\Program Files\Tesseract-OCR"
           if (-not (Test-Path "$t\tesseract.exe")) { throw "tesseract.exe not found in $t" }
           Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata/raw/main/ind.traineddata" -OutFile "$t\tessdata\ind.traineddata"
+          # Slower but more accurate LSTM model, used by the "Teliti" OCR mode and as a second opinion on weak pages
+          Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_best/raw/main/ind.traineddata" -OutFile "$t\tessdata\indbest.traineddata"
           & "$t\tesseract.exe" --version
           & "$t\tesseract.exe" --list-langs
 
@@ -55,7 +57,7 @@ jobs:
           $dst = "dist\LegalCompliance\tesseract"
           New-Item -ItemType Directory -Force "$dst\tessdata" | Out-Null
           Copy-Item "$t\tesseract.exe", "$t\*.dll" $dst
-          Copy-Item "$t\tessdata\eng.traineddata", "$t\tessdata\ind.traineddata", "$t\tessdata\osd.traineddata" "$dst\tessdata"
+          Copy-Item "$t\tessdata\eng.traineddata", "$t\tessdata\ind.traineddata", "$t\tessdata\osd.traineddata", "$t\tessdata\indbest.traineddata" "$dst\tessdata"
           Copy-Item "$t\tessdata\configs" "$dst\tessdata\configs" -Recurse
           Invoke-WebRequest "https://raw.githubusercontent.com/tesseract-ocr/tesseract/main/LICENSE" -OutFile "$dst\LICENSE-Tesseract.txt"
           "Bundled Tesseract size (MB): " + [math]::Round(((Get-ChildItem $dst -Recurse | Measure-Object Length -Sum).Sum / 1MB), 1)

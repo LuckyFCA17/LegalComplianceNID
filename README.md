@@ -165,6 +165,25 @@ tidak menjalankan OCR ganda. Hasilnya disimpan untuk semua pengguna, nomor pasal
 otomatis (`PasaI 1O` → `Pasal 10`, `(l)` → `(1)`), halaman dengan keyakinan rendah ditandai, dan teks bisa
 diperbaiki lewat **Sunting teks** sebelum dianalisa. PDF aslinya disimpan di folder `pdf/` di samping database.
 
+**Akurasi OCR (mesin tik / serif) dan OCR ulang.** Sebelum dibaca, gambar halaman dibersihkan tanpa AI:
+latar kertas diratakan, kontras diregangkan, bintik dihapus, dan kemiringan diluruskan (`app/ocr_prep.py`).
+Halaman yang keyakinannya rendah dicoba lagi dengan huruf ditebalkan; mode **Teliti** juga mencoba gambar asli
+dan model `indbest` (tessdata_best, disertakan di paket portable), lalu memilih hasil terbaik per halaman.
+Setelah itu koreksi berbasis aturan (`app/ocr_correct.py`) memperbaiki struktur (`BAB |` → `BAB I`, `Pasa1` →
+`Pasal`, nomor pasal yang hilang disimpulkan dari urutan) dan kata yang dibaca Tesseract dengan keyakinan rendah,
+memakai kamus istilah hukum + kata dari teks yang sudah bersih di database. Singkatan (K3, B3, P2K3, UKL…) tidak
+pernah diubah. Setiap teks diberi **Kualitas teks** 0–100.
+
+Tombol **OCR ulang…** bisa dipakai untuk teks yang sudah ada: pilih *hanya halaman scan*, *semua halaman*
+(mengabaikan lapisan teks bawaan PDF yang jelek) atau *halaman tertentu* (`1,3-5`), dan ketelitian
+*Standar*/*Teliti* (±3–5× lebih lama). Bila teks sekarang masih dipakai (pernah disunting atau berasal dari
+lapisan teks PDF), hasil baru ditampilkan berdampingan (kualitas, keyakinan, jumlah pasal & usulan) untuk
+dipilih **Pakai hasil baru** atau **Tetap pakai teks sekarang**. Teks lama selalu masuk **Riwayat teks** dan
+bisa dipulihkan. PDF dengan lapisan teks berkualitas buruk diberi peringatan dan tawaran OCR ulang.
+
+Uji pada scan mesin tik sintetis (rusak berat): galat karakter turun dari ±96% ke ±5–7%, pasal dikenali 0 → 5/5.
+Hasil pada dokumen nyata bisa berbeda; jalankan `pytest tests/test_ocr_accuracy.py` untuk uji ulang.
+
 Tesseract dicari di: `LCN_TESSERACT`, folder `tesseract\` di samping program (sudah disertakan di paket
 portable Windows), `PATH`, lalu `C:\Program Files\Tesseract-OCR`. Versi lain: `apt install tesseract-ocr
 tesseract-ocr-ind` (Linux/Docker) atau `pkg install tesseract` (Termux).

@@ -655,6 +655,18 @@ $("#sources").addEventListener("change", async (e) => {
 });
 
 /* ---------------------------------------------------------------- offline legal analysis */
+function showText(title, content) {
+  const w = window.open("", "_blank");
+  if (!w) return toast("Izinkan pop-up untuk melihat teks");
+  w.document.title = title;
+  const h = w.document.createElement("h3");
+  h.textContent = title;
+  h.style.cssText = "font:600 16px system-ui;padding:24px 24px 0";
+  const pre = w.document.createElement("pre");
+  pre.style.cssText = "white-space:pre-wrap;font:14px/1.5 system-ui;padding:0 24px 24px;max-width:900px";
+  pre.textContent = content;
+  w.document.body.append(h, pre);
+}
 const AN_TYPES = { kewajiban: "Kewajiban", larangan: "Larangan", pelaporan: "Pelaporan", perizinan: "Perizinan / dokumen" };
 const ORIGIN = { pdf_url: "PDF resmi", upload: "file unggahan", paste: "teks tempelan", ocr: "OCR dari PDF scan" };
 const an = { id: null, data: null, types: new Set(Object.keys(AN_TYPES)), showGov: false, picked: new Map() };
@@ -700,6 +712,17 @@ function ocrBox(t, job) {
   }
   let html = "";
   if (job && ["error", "cancelled"].includes(job.status)) html += `<p class="an-warn">⚠ ${esc(job.message)}</p>`;
+  if (job && job.status === "review" && job.result) html += reviewBox(t, job);
+  if (job && ["done", "discarded"].includes(job.status) && job.message) {
+    const r = job.result;
+    html += `<p class="an-note">✓ ${esc(job.message)}${r && r.correction_examples && r.correction_examples.length
+      ? `<br><span class="muted">Contoh koreksi otomatis: ${esc(r.correction_examples.slice(0, 5).join(", "))}</span>` : ""}</p>`;
+  }
+  if (t && t.poor_text && !(job && job.status === "review")) {
+    html += `<div class="ocr-need"><b>⚠ Teks bawaan PDF tampak berkualitas rendah</b> (skor ${t.text_quality}/100) —
+      biasanya hasil OCR lama dari penerbit. Membaca ulang dengan OCR aplikasi bisa memperbaiki analisa.
+      ${an.ocr && an.ocr.available ? `<div class="an-actions"><button class="editor-only" data-an="redo-all">OCR ulang semua halaman…</button></div>` : ""}</div>`;
+  }
   if (t && t.needs_ocr) {
     html += `<div class="ocr-need"><b>⚠ ${t.scanned ? "PDF hasil scan" : `${t.needs_ocr} halaman berupa gambar`}</b> —
       ${t.needs_ocr} dari ${t.pages} halaman tidak punya lapisan teks, jadi belum bisa dianalisa.
@@ -724,6 +747,54 @@ async function loadAnalysis(data) {
   });
   renderAnalysis();
 }
+const QUALITY_LABEL = (q) => q == null ? "–" : q >= 85 ? `${q}/100 (baik)` : q >= 70 ? `${q}/100 (cukup)` : `${q}/100 (buruk)`;
+function reviewBox(t, job) {
+  const r = job.result, cur = an.data;
+  const row = (label, a, b) => `<tr><td>${label}</td><td>${a}</td><td><b>${b}</b></td></tr>`;
+  return `<div class="ocr-review"><b>Hasil OCR baru menunggu keputusan</b>
+    <p class="muted">${esc(job.message || "")}</p>
+    <table class="data compare"><tr><th></th><th>Teks sekarang</th><th>Hasil OCR baru</th></tr>
+      ${row("Sumber", esc(ORIGIN[t.origin] || t.origin) + (t.edited ? " · disunting" : ""), `OCR ${esc(r.mode)} · ${esc(r.quality)}`)}
+      ${row("Kualitas teks", QUALITY_LABEL(t.text_quality), QUALITY_LABEL(r.text_quality))}
+      ${row("Keyakinan OCR", t.ocr_conf ? Math.round(t.ocr_conf) : "–", r.mean_conf ? Math.round(r.mean_conf) : "–")}
+      ${row("Pasal dikenali", cur.articles, r.articles)}
+      ${row("Usulan persyaratan", cur.candidates.length, r.candidates)}
+      ${row("Panjang teks", `${Math.round(t.chars / 1000)} rb karakter`, `${Math.round(r.chars / 1000)} rb karakter`)}
+    </table>
+    ${r.corrections ? `<p class="muted">${r.corrections} koreksi otomatis, mis. ${esc((r.correction_examples || []).slice(0, 5).join(", "))}</p>` : ""}
+    ${t.edited ? `<p class="an-warn">Teks sekarang pernah disunting manual. Jika hasil baru dipakai, suntingan itu tetap tersimpan di riwayat teks.</p>` : ""}
+    <div class="an-actions">
+      <button class="editor-only" data-an="ocr-accept">Pakai hasil baru</button>
+      <button class="secondary editor-only" data-an="ocr-discard">Tetap pakai teks sekarang</button>
+      <button class="link" data-an="ocr-view-new">Lihat teks baru</button>
+    </div></div>`;
+}
+function redoPanel(t) {
+  if (!t || !t.has_pdf) {
+    return `<div class="ocr-redo" hidden><p class="muted">PDF aslinya belum tersimpan untuk teks ini (diambil sebelum
+      fitur OCR ulang). Ambil ulang dari PDF resmi atau unggah PDF-nya, lalu OCR ulang bisa dijalankan.</p></div>`;
+  }
+  return `<div class="ocr-redo" hidden><b>OCR ulang</b>
+    <div class="redo-grid">
+      <fieldset><legend>Halaman</legend>
+        <label><input type="radio" name="redo-mode" value="scan" ${t.needs_ocr ? "checked" : ""}> Hanya halaman tanpa teks (scan)</label>
+        <label><input type="radio" name="redo-mode" value="all" ${t.needs_ocr ? "" : "checked"}> Semua halaman — abaikan teks bawaan PDF</label>
+        <label><input type="radio" name="redo-mode" value="pages"> Halaman tertentu:
+          <input type="text" name="redo-pages" placeholder="mis. 1,3-5" size="10"
+            value="${esc((t.ocr_low_pages || []).join(","))}"></label>
+      </fieldset>
+      <fieldset><legend>Ketelitian</legend>
+        <label><input type="radio" name="redo-quality" value="standar" checked> Standar (disarankan)</label>
+        <label><input type="radio" name="redo-quality" value="teliti"> Teliti — mencoba beberapa pengolahan gambar
+          dan model, ±3–5× lebih lama</label>
+      </fieldset>
+    </div>
+    <p class="muted">Gambar halaman dibersihkan (latar, kontras, bintik, kemiringan), dibaca dengan Tesseract,
+      lalu salah-baca umum diperbaiki. Bila teks sekarang
+      masih dipakai, hasil baru ditampilkan berdampingan dulu sebelum menggantikannya.</p>
+    <div class="an-actions"><button class="editor-only" data-an="redo-start">Mulai OCR</button>
+      <button class="secondary" data-an="redo-cancel">Batal</button></div></div>`;
+}
 function sourceBar(a) {
   const t = a.text;
   const editBtns = `
@@ -733,9 +804,13 @@ function sourceBar(a) {
   return `<div class="an-source">
     <div>${t ? `<b>Teks:</b> ${ORIGIN[t.origin] || t.origin}${t.filename ? ` (${esc(decodeURIComponent(t.filename))})` : ""}
       · ${t.pages ? t.pages + " halaman · " : ""}${Math.round(t.chars / 1000)} rb karakter · ${fmtDate(t.fetched_at)}${t.fetched_by ? " oleh " + esc(t.fetched_by) : ""}`
-      : `<b>Teks peraturan belum diambil.</b> Ambil dari PDF resmi, atau unggah/tempel bila situs JDIH tidak dapat diakses.`}</div>
+      : `<b>Teks peraturan belum diambil.</b> Ambil dari PDF resmi, atau unggah/tempel bila situs JDIH tidak dapat diakses.`}
+      ${t ? `<br><span class="muted">Kualitas teks: ${QUALITY_LABEL(t.text_quality)}${t.origin === "ocr" && t.ocr_conf
+        ? ` · keyakinan OCR ${Math.round(t.ocr_conf)}` : ""}${t.ocr_mode ? ` · OCR ${esc(t.ocr_mode.replace("/", ", "))}` : ""}</span>` : ""}</div>
     <div class="an-actions">${editBtns}
       ${t ? `<button class="link" data-an="view">Lihat teks lengkap</button>
+        ${an.ocr && an.ocr.available && !(a.ocr_job && a.ocr_job.active) ? `<button class="secondary editor-only" data-an="redo">OCR ulang…</button>` : ""}
+        ${t.versions ? `<button class="link" data-an="versions">Riwayat teks (${t.versions})</button>` : ""}
         <button class="secondary editor-only" data-an="edit">Sunting teks</button>
         <button class="danger editor-only" data-an="delete">Hapus teks</button>` : ""}</div>
     <div class="an-paste" hidden><textarea rows="8" placeholder="Tempel teks lengkap peraturan di sini (mis. hasil salin dari PDF)…"></textarea>
@@ -743,6 +818,8 @@ function sourceBar(a) {
     <div class="an-edit" hidden><p class="muted">Perbaiki teks (mis. salah baca OCR). Pertahankan baris “Pasal N” dan penanda ayat “(1)” di awal baris.</p>
       <textarea rows="16"></textarea>
       <div class="an-actions"><button data-an="edit-save">Simpan &amp; analisa ulang</button><button class="secondary" data-an="edit-cancel">Batal</button></div></div>
+    ${redoPanel(t)}
+    <div class="an-versions" hidden></div>
   </div>${ocrBox(t, a.ocr_job)}`;
 }
 function renderAnalysis() {
@@ -814,6 +891,52 @@ $("#an-body").addEventListener("click", async (e) => {
     } catch (err) { toast(err.message); e.target.disabled = false; }
     return;
   }
+  const redo = $(".ocr-redo", $("#an-body"));
+  if (act === "redo" || act === "redo-all") {
+    redo.hidden = false;
+    if (act === "redo-all") { const r = redo.querySelector('input[value="all"]'); if (r) r.checked = true; }
+    return redo.scrollIntoView({ block: "nearest" });
+  }
+  if (act === "redo-cancel") { redo.hidden = true; return; }
+  if (act === "redo-start") {
+    const mode = redo.querySelector("input[name=redo-mode]:checked").value;
+    const body = { mode, quality: redo.querySelector("input[name=redo-quality]:checked").value };
+    if (mode === "pages") body.pages = redo.querySelector("input[name=redo-pages]").value;
+    e.target.disabled = true;
+    try {
+      const r = await api(`/api/regulations/${an.id}/ocr`, { method: "POST", body });
+      an.data.ocr_job = r.job;
+      renderAnalysis();
+    } catch (err) { toast(err.message); e.target.disabled = false; }
+    return;
+  }
+  if (act === "ocr-accept") return anCall(e.target, () => api(`/api/regulations/${an.id}/ocr/accept`, { method: "POST" }));
+  if (act === "ocr-discard") return anCall(e.target, () => api(`/api/regulations/${an.id}/ocr/discard`, { method: "POST" }));
+  if (act === "ocr-view-new") {
+    const r = await api(`/api/regulations/${an.id}/ocr/result`);
+    return showText(an.reg.citation + " — hasil OCR baru", r.content);
+  }
+  if (act === "versions") {
+    const box = $(".an-versions", $("#an-body"));
+    if (!box.hidden) { box.hidden = true; return; }
+    const vs = await api(`/api/regulations/${an.id}/text/versions`);
+    box.innerHTML = `<b>Riwayat teks</b><ul class="plain">${vs.map((v) => `<li>
+      ${fmtDate(v.saved_at)} · ${esc(ORIGIN[v.origin] || v.origin)}${v.meta.edited ? " · disunting" : ""}
+      · kualitas ${QUALITY_LABEL(v.meta.text_quality)} · ${Math.round(v.chars / 1000)} rb karakter
+      <div class="meta">${esc(v.reason || "")}${v.saved_by ? " · " + esc(v.saved_by) : ""}</div>
+      <button class="link" data-an="ver-view" data-ver="${v.id}">Lihat</button>
+      <button class="link editor-only" data-an="ver-restore" data-ver="${v.id}">Kembalikan versi ini</button></li>`).join("")}</ul>`;
+    box.hidden = false;
+    if (!canEdit()) box.querySelectorAll(".editor-only").forEach((el) => (el.hidden = true));
+    return;
+  }
+  if (act === "ver-restore" && confirm("Kembalikan versi teks ini? Teks sekarang disimpan di riwayat.")) {
+    return anCall(e.target, () => api(`/api/regulations/${an.id}/text/versions/${e.target.dataset.ver}/restore`, { method: "POST" }));
+  }
+  if (act === "ver-view") {
+    const v = await api(`/api/regulations/${an.id}/text/versions/${e.target.dataset.ver}`);
+    return showText(`${an.reg.citation} — versi ${fmtDate(v.saved_at)}`, v.text);
+  }
   if (act === "ocr-cancel") {
     const r = await api(`/api/regulations/${an.id}/ocr/cancel`, { method: "POST" });
     an.data.ocr_job = r.job;
@@ -837,11 +960,7 @@ $("#an-body").addEventListener("click", async (e) => {
   }
   if (act === "view") {
     const t = await api(`/api/regulations/${an.id}/text`);
-    const w = window.open("", "_blank");
-    if (w) { w.document.title = an.reg.citation; const pre = w.document.createElement("pre");
-      pre.style.cssText = "white-space:pre-wrap;font:14px/1.5 system-ui;padding:24px;max-width:900px"; pre.textContent = t.content;
-      w.document.body.appendChild(pre); }
-    return;
+    return showText(an.reg.citation, t.content);
   }
   if (act === "delete" && confirm("Hapus teks peraturan yang tersimpan? Kewajiban yang sudah ditambahkan tidak terhapus.")) {
     await api(`/api/regulations/${an.id}/text`, { method: "DELETE" });

@@ -106,6 +106,19 @@ CREATE TABLE IF NOT EXISTS regulation_texts (
     fetched_by    TEXT
 );
 
+-- Earlier versions of a regulation's text (kept when OCR or a restore replaces it).
+CREATE TABLE IF NOT EXISTS regulation_text_versions (
+    id            INTEGER PRIMARY KEY,
+    regulation_id INTEGER NOT NULL REFERENCES regulations(id) ON DELETE CASCADE,
+    origin        TEXT NOT NULL,
+    text          TEXT NOT NULL,
+    meta          TEXT,                    -- JSON: quality, OCR confidence, edited, ...
+    saved_at      TEXT NOT NULL,
+    saved_by      TEXT,
+    reason        TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_textver_reg ON regulation_text_versions(regulation_id);
+
 -- Background OCR jobs (visible to every computer using the database).
 CREATE TABLE IF NOT EXISTS ocr_jobs (
     regulation_id INTEGER PRIMARY KEY REFERENCES regulations(id) ON DELETE CASCADE,
@@ -171,6 +184,15 @@ MIGRATIONS = [
     ("regulation_texts", "ocr_low_pages", "ALTER TABLE regulation_texts ADD COLUMN ocr_low_pages TEXT"),
     ("regulation_texts", "pdf_file", "ALTER TABLE regulation_texts ADD COLUMN pdf_file TEXT"),
     ("regulation_texts", "edited", "ALTER TABLE regulation_texts ADD COLUMN edited INTEGER NOT NULL DEFAULT 0"),
+    # re-OCR, OCR accuracy and text quality
+    ("regulation_texts", "text_quality", "ALTER TABLE regulation_texts ADD COLUMN text_quality INTEGER"),
+    ("regulation_texts", "ocr_conf", "ALTER TABLE regulation_texts ADD COLUMN ocr_conf REAL"),
+    ("regulation_texts", "ocr_mode", "ALTER TABLE regulation_texts ADD COLUMN ocr_mode TEXT"),
+    ("ocr_jobs", "mode", "ALTER TABLE ocr_jobs ADD COLUMN mode TEXT"),
+    ("ocr_jobs", "quality", "ALTER TABLE ocr_jobs ADD COLUMN quality TEXT"),
+    ("ocr_jobs", "pages_spec", "ALTER TABLE ocr_jobs ADD COLUMN pages_spec TEXT"),
+    ("ocr_jobs", "result_text", "ALTER TABLE ocr_jobs ADD COLUMN result_text TEXT"),
+    ("ocr_jobs", "result_meta", "ALTER TABLE ocr_jobs ADD COLUMN result_meta TEXT"),
 ]
 
 
